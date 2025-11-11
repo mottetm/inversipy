@@ -96,6 +96,7 @@ class Container:
             name: Name for this container (used in error messages)
         """
         self._bindings: Dict[DependencyKey, Binding] = {}
+        self._modules: List[Any] = []  # List of registered modules
         self._parent = parent
         self._name = name
         self._resolution_stack: List[Type[Any]] = []
@@ -183,6 +184,30 @@ class Container:
         # Instances are always singletons
         return self.register(interface, instance=instance, scope=SingletonScope())
 
+    def register_module(self, module: Any) -> "Container":
+        """Register a module as a provider of dependencies.
+
+        The module will be consulted when resolving dependencies. Only the module's
+        public dependencies are accessible to the container.
+
+        Args:
+            module: Module to register (from inversipy.module import Module)
+
+        Returns:
+            Self for chaining
+
+        Example:
+            db_module = Module("Database")
+            db_module.register(Database, public=True)
+
+            container = Container()
+            container.register_module(db_module)  # Module provides Database
+
+            db = container.get(Database)  # Resolved from module
+        """
+        self._modules.append(module)
+        return self
+
     def get(self, interface: Type[T]) -> T:
         """Resolve a dependency from the container.
 
@@ -203,6 +228,20 @@ class Container:
 
         # Try to find binding in this container
         binding = self._bindings.get(interface)
+
+        # If not found, try registered modules
+        if binding is None:
+            for module in self._modules:
+                if module.is_public(interface):
+                    # Add to resolution stack
+                    self._resolution_stack.append(interface)
+                    try:
+                        # Resolve from the module's internal container
+                        instance = module._container.get(interface)
+                        return cast(T, instance)
+                    finally:
+                        # Remove from resolution stack
+                        self._resolution_stack.pop()
 
         # If not found, try parent container
         if binding is None and self._parent is not None:
@@ -247,6 +286,12 @@ class Container:
         """
         if interface in self._bindings:
             return True
+
+        # Check registered modules
+        for module in self._modules:
+            if module.is_public(interface):
+                return True
+
         if self._parent is not None:
             return self._parent.has(interface)
         return False

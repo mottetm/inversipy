@@ -153,23 +153,30 @@ class Module:
         self._container.validate()
 
     def load_into(self, container: Container) -> None:
-        """Load this module's public dependencies into a container.
+        """DEPRECATED: Register this module with a container.
+
+        This method is deprecated. Use container.register_module(module) instead.
+
+        The old behavior (copying bindings) has been replaced with live module
+        registration where the module remains the source of truth.
 
         Args:
-            container: Target container to load dependencies into
+            container: Target container to register this module with
+
+        Example:
+            # Old way (deprecated):
+            module.load_into(container)
+
+            # New way (recommended):
+            container.register_module(module)
         """
-        for key in self._public_keys:
-            # Get the binding from the module's container
-            binding = self._container._bindings.get(key)
-            if binding is not None:
-                # Register in the target container
-                container.register(
-                    interface=key,
-                    implementation=binding.implementation,
-                    factory=binding.factory,
-                    scope=binding.scope,
-                    instance=binding.instance,
-                )
+        import warnings
+        warnings.warn(
+            "Module.load_into() is deprecated. Use container.register_module(module) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        container.register_module(self)
 
     def __repr__(self) -> str:
         """Get string representation of the module."""

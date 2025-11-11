@@ -83,16 +83,16 @@ class TestModuleBasics:
 
 
 class TestModuleLoading:
-    """Test loading modules into containers."""
+    """Test registering modules as providers."""
 
-    def test_load_public_dependencies(self) -> None:
-        """Test loading public dependencies into a container."""
+    def test_register_module_with_public_dependencies(self) -> None:
+        """Test registering a module with public dependencies."""
         module = Module("TestModule")
         module.register(PublicService, public=True)
         module.register(PrivateService, public=False)
 
         container = Container()
-        module.load_into(container)
+        container.register_module(module)
 
         # Public dependency should be available
         assert container.has(PublicService)
@@ -102,21 +102,21 @@ class TestModuleLoading:
         # Private dependency should not be available
         assert not container.has(PrivateService)
 
-    def test_load_preserves_scopes(self) -> None:
-        """Test that loading preserves dependency scopes."""
+    def test_module_preserves_scopes(self) -> None:
+        """Test that module preserves dependency scopes."""
         module = Module("TestModule")
         module.register(PublicService, public=True, scope=SINGLETON)
 
         container = Container()
-        module.load_into(container)
+        container.register_module(module)
 
         service1 = container.get(PublicService)
         service2 = container.get(PublicService)
 
         assert service1 is service2
 
-    def test_load_multiple_modules(self) -> None:
-        """Test loading multiple modules into one container."""
+    def test_register_multiple_modules(self) -> None:
+        """Test registering multiple modules."""
         module1 = Module("Module1")
         module1.register(PublicService, public=True)
 
@@ -124,26 +124,47 @@ class TestModuleLoading:
         module2.register(PrivateService, public=True)
 
         container = Container()
-        module1.load_into(container)
-        module2.load_into(container)
+        container.register_module(module1)
+        container.register_module(module2)
 
         assert container.has(PublicService)
         assert container.has(PrivateService)
 
     def test_module_internal_dependencies(self) -> None:
-        """Test that modules can have internal dependencies."""
+        """Test that modules can resolve internal dependencies."""
         module = Module("TestModule")
         module.register(PrivateService, public=False)
         module.register(DependentService, public=True)
 
         container = Container()
-        module.load_into(container)
+        container.register_module(module)
 
-        # DependentService should be available
+        # DependentService should be available and resolve correctly
+        # The module resolves its own internal dependencies
         assert container.has(DependentService)
+        service = container.get(DependentService)
+        assert isinstance(service, DependentService)
+        assert isinstance(service.private, PrivateService)
 
-        # But it won't resolve because PrivateService is not in the container
-        # This is expected - modules should export all required dependencies
+    def test_module_remains_live(self) -> None:
+        """Test that modules remain live providers after registration."""
+        module = Module("TestModule")
+        module.register(PublicService, public=True)
+
+        container = Container()
+        container.register_module(module)
+
+        # Initially can resolve
+        assert container.has(PublicService)
+        service1 = container.get(PublicService)
+
+        # Add a new public dependency to the module
+        module.register(PrivateService, public=True)
+
+        # Container should now be able to resolve it
+        assert container.has(PrivateService)
+        service2 = container.get(PrivateService)
+        assert isinstance(service2, PrivateService)
 
 
 class TestModuleBuilder:
@@ -181,7 +202,7 @@ class TestModuleBuilder:
         )
 
         container = Container()
-        module.load_into(container)
+        container.register_module(module)
 
         service1 = container.get(PublicService)
         service2 = container.get(PublicService)

@@ -177,7 +177,7 @@ async def get_service():
 
 ### Modules
 
-Modules allow you to organize dependencies with public/private access control.
+Modules allow you to organize dependencies with public/private access control. Modules are registered as **live providers** - they remain the source of truth for their dependencies.
 
 ```python
 from inversipy import Module, Container, SINGLETON
@@ -196,14 +196,18 @@ db_module.register(UserRepository, public=True)
 # Or use export to make dependencies public
 db_module.export(Database, UserRepository)
 
-# Load module into container
+# Register module as a provider in the container
 container = Container()
-db_module.load_into(container)
+container.register_module(db_module)
 
 # Only public dependencies are accessible
 database = container.get(Database)  # ✓ Works
 user_repo = container.get(UserRepository)  # ✓ Works
-# connection = container.get(DatabaseConnection)  # ✗ Not accessible
+# connection = container.get(DatabaseConnection)  # ✗ Not accessible (private)
+
+# Module remains live - add new dependencies dynamically
+db_module.register(CacheService, public=True)
+cache = container.get(CacheService)  # ✓ Works! Module is still connected
 ```
 
 Using ModuleBuilder:
