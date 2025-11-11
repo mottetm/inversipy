@@ -1,5 +1,6 @@
 """Container implementation for dependency injection."""
 
+import asyncio
 import inspect
 from typing import (
     Any,
@@ -47,6 +48,7 @@ class Binding:
         self.implementation = implementation
         self.scope = scope
         self.instance = instance
+        self._async_scope_cache: Dict[Any, Any] = {}  # Cache for async resolution with non-async scopes
 
         # Validate that we have at least one way to create instances
         if factory is None and implementation is None and instance is None:
@@ -78,6 +80,75 @@ class Binding:
 
         # Use the scope to manage instance lifecycle
         return self.scope.get(factory_func)
+
+    async def create_instance_async(self, container: "Container") -> Any:
+        """Create an instance of the dependency asynchronously.
+
+        Args:
+            container: Container to use for resolving dependencies
+
+        Returns:
+            Created instance
+        """
+        # If we have a pre-created instance, return it
+        if self.instance is not None:
+            return self.instance
+
+        # Build the factory function
+        if self.factory is not None:
+            factory_func = self.factory
+        elif self.implementation is not None:
+            # Create a factory from the implementation type
+            # For async, we need to call _create_instance_async
+            async def async_impl_factory():  # type: ignore
+                return await container._create_instance_async(self.implementation)  # type: ignore
+            factory_func = async_impl_factory
+        else:
+            raise ResolutionError(f"Cannot create instance for {self.key}")
+
+        # Use the scope to manage instance lifecycle
+        from .types import AsyncScope
+        if isinstance(self.scope, AsyncScope):
+            return await self.scope.get_async(factory_func)
+        else:
+            # For non-async scopes with async resolution, handle caching manually
+            # because scopes cache coroutines instead of awaited results
+
+            # Determine cache key based on scope type
+            cache_key = None
+            if isinstance(self.scope, SingletonScope):
+                cache_key = "singleton"
+            elif isinstance(self.scope, RequestScope):
+                # For RequestScope, use asyncio task id as cache key
+                # Each async task gets its own context automatically
+                current_task = asyncio.current_task()
+                if current_task is not None:
+                    cache_key = f"request_{id(current_task)}"
+                else:
+                    cache_key = "request_main"
+            elif isinstance(self.scope, TransientScope):
+                # No caching for transient
+                cache_key = None
+            else:
+                # For unknown scopes, use a fixed key (behave like singleton)
+                cache_key = "default"
+
+            # Check cache
+            if cache_key is not None and cache_key in self._async_scope_cache:
+                return self._async_scope_cache[cache_key]
+
+            # Create instance
+            result = factory_func()
+            if asyncio.iscoroutine(result):
+                instance = await result
+            else:
+                instance = result
+
+            # Store in cache if needed
+            if cache_key is not None:
+                self._async_scope_cache[cache_key] = instance
+
+            return instance
 
 
 class Container:
@@ -280,6 +351,62 @@ class Container:
         except DependencyNotFoundError:
             return None
 
+    async def get_async[T](self, interface: Type[T]) -> T:
+        """Resolve a dependency from the container asynchronously.
+
+        This method supports async factories and async scopes. It follows the same
+        resolution order as get():
+        1. Check local bindings
+        2. Check registered modules
+        3. Check parent container (if exists)
+
+        Args:
+            interface: The type to resolve
+
+        Returns:
+            Resolved instance
+
+        Raises:
+            DependencyNotFoundError: If dependency is not registered
+            CircularDependencyError: If circular dependency is detected
+        """
+        # Check for circular dependencies
+        if interface in self._resolution_stack:
+            self._resolution_stack.append(interface)
+            raise CircularDependencyError(self._resolution_stack[:])
+
+        # Try to find binding in this container
+        binding = self._bindings.get(interface)
+
+        # If not found, try registered modules
+        if binding is None:
+            for module in self._modules:
+                try:
+                    # Try to resolve from the module asynchronously
+                    instance = await module.get_async(interface)
+                    return cast(T, instance)
+                except DependencyNotFoundError:
+                    # This module doesn't have it (or it's private), try next module
+                    continue
+
+        # If not found, try parent container
+        if binding is None and self._parent is not None:
+            return await self._parent.get_async(interface)
+
+        # If still not found, raise error
+        if binding is None:
+            raise DependencyNotFoundError(interface, self._name)
+
+        # Add to resolution stack
+        self._resolution_stack.append(interface)
+
+        try:
+            instance = await binding.create_instance_async(self)
+            return cast(T, instance)
+        finally:
+            # Remove from resolution stack
+            self._resolution_stack.pop()
+
     def has(self, interface: Type[Any]) -> bool:
         """Check if a dependency is registered.
 
@@ -349,6 +476,73 @@ class Container:
                     # Try to resolve from container
                     try:
                         kwargs[param_name] = self.get(param_type)
+                    except DependencyNotFoundError:
+                        # Check if parameter has a default value
+                        if param.default is inspect.Parameter.empty:
+                            raise ResolutionError(
+                                f"Cannot resolve parameter '{param_name}' of type "
+                                f"'{param_type}' for class '{cls.__name__}'"
+                            )
+                elif param.default is inspect.Parameter.empty:
+                    raise ResolutionError(
+                        f"Parameter '{param_name}' of class '{cls.__name__}' "
+                        f"has no type annotation and no default value"
+                    )
+
+            # Create the instance
+            return cls(**kwargs)
+
+        except Exception as e:
+            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
+                raise
+            raise ResolutionError(f"Failed to create instance of {cls.__name__}: {e}")
+
+    async def _create_instance_async[T](self, cls: Type[T]) -> T:
+        """Create an instance of a class asynchronously, resolving its dependencies.
+
+        Args:
+            cls: The class to instantiate
+
+        Returns:
+            Created instance
+
+        Raises:
+            ResolutionError: If instance creation fails
+        """
+        try:
+            # Get the __init__ method
+            init_method = cls.__init__  # type: ignore
+
+            # Get type hints for the constructor
+            try:
+                type_hints = get_type_hints(init_method)
+            except Exception:
+                # If we can't get type hints, try without dependencies
+                type_hints = {}
+
+            # Remove 'return' from type hints
+            type_hints.pop("return", None)
+
+            # Get constructor signature
+            sig = inspect.signature(init_method)
+
+            # Resolve dependencies asynchronously
+            kwargs: Dict[str, Any] = {}
+            for param_name, param in sig.parameters.items():
+                if param_name == "self":
+                    continue
+
+                # Skip *args and **kwargs
+                if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                    continue
+
+                # Get the type hint for this parameter
+                param_type = type_hints.get(param_name)
+
+                if param_type is not None:
+                    # Try to resolve from container asynchronously
+                    try:
+                        kwargs[param_name] = await self.get_async(param_type)
                     except DependencyNotFoundError:
                         # Check if parameter has a default value
                         if param.default is inspect.Parameter.empty:

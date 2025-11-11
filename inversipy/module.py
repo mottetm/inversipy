@@ -149,6 +149,34 @@ class Module(Container):
         # Public dependency - resolve it
         return super().get(interface)
 
+    async def get_async[T](self, interface: Type[T]) -> T:
+        """Resolve a dependency from the module asynchronously.
+
+        When called externally (from a Container), only public dependencies
+        are accessible. When called internally (during dependency resolution),
+        all dependencies are accessible.
+
+        Args:
+            interface: The type to resolve
+
+        Returns:
+            Resolved instance
+
+        Raises:
+            DependencyNotFoundError: If dependency is not registered or not public
+        """
+        # If we're in the middle of resolving something (stack not empty),
+        # this is an internal call, so allow access to private dependencies
+        if self._resolution_stack:
+            return await super().get_async(interface)
+
+        # External call - check if dependency is public
+        if not self.is_public(interface):
+            raise DependencyNotFoundError(interface, self._name)
+
+        # Public dependency - resolve it
+        return await super().get_async(interface)
+
     def has(self, interface: Type[Any]) -> bool:
         """Check if a dependency is publicly available.
 

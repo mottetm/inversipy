@@ -1,7 +1,15 @@
 """Tests for the Module class."""
 
 import pytest
-from inversipy import Container, Module, ModuleBuilder, SINGLETON, RegistrationError
+from inversipy import (
+    Container,
+    Module,
+    ModuleBuilder,
+    SINGLETON,
+    AsyncSingletonScope,
+    DependencyNotFoundError,
+    RegistrationError,
+)
 
 
 class PublicService:
@@ -232,3 +240,91 @@ class TestModuleValidation:
         assert "TestModule" in repr_str
         assert "PublicService" in repr_str
         assert "total_dependencies=2" in repr_str
+
+
+class TestAsyncModuleOperations:
+    """Test async module operations."""
+
+    @pytest.mark.asyncio
+    async def test_get_async_public_dependency(self) -> None:
+        """Test async resolution of public dependency from module."""
+        module = Module("TestModule")
+        module.register(PublicService, public=True)
+
+        service = await module.get_async(PublicService)
+        assert isinstance(service, PublicService)
+        assert service.get_value() == "public"
+
+    @pytest.mark.asyncio
+    async def test_get_async_private_dependency_raises(self) -> None:
+        """Test async resolution of private dependency raises."""
+        module = Module("TestModule")
+        module.register(PrivateService, public=False)
+
+        with pytest.raises(DependencyNotFoundError):
+            await module.get_async(PrivateService)
+
+    @pytest.mark.asyncio
+    async def test_get_async_with_dependencies(self) -> None:
+        """Test async resolution with internal dependencies."""
+        module = Module("TestModule")
+        module.register(PrivateService, public=False)
+        module.register(DependentService, public=True)
+
+        service = await module.get_async(DependentService)
+        assert isinstance(service, DependentService)
+        assert service.get_value() == "dependent:private"
+
+    @pytest.mark.asyncio
+    async def test_get_async_with_async_singleton(self) -> None:
+        """Test async resolution with AsyncSingletonScope in module."""
+        module = Module("TestModule")
+        scope = AsyncSingletonScope()
+        module.register(PublicService, scope=scope, public=True)
+
+        service1 = await module.get_async(PublicService)
+        service2 = await module.get_async(PublicService)
+
+        assert service1 is service2
+
+    @pytest.mark.asyncio
+    async def test_container_get_async_from_module(self) -> None:
+        """Test container async resolution from registered module."""
+        module = Module("TestModule")
+        module.register(PublicService, public=True)
+
+        container = Container()
+        container.register_module(module)
+
+        service = await container.get_async(PublicService)
+        assert isinstance(service, PublicService)
+        assert service.get_value() == "public"
+
+    @pytest.mark.asyncio
+    async def test_container_get_async_private_from_module_raises(self) -> None:
+        """Test container async resolution of private module dependency raises."""
+        module = Module("TestModule")
+        module.register(PrivateService, public=False)
+
+        container = Container()
+        container.register_module(module)
+
+        with pytest.raises(DependencyNotFoundError):
+            await container.get_async(PrivateService)
+
+    @pytest.mark.asyncio
+    async def test_get_async_with_async_factory(self) -> None:
+        """Test async resolution with async factory in module."""
+        module = Module("TestModule")
+
+        async def async_factory() -> PublicService:
+            return PublicService()
+
+        scope = AsyncSingletonScope()
+        module.register_factory(PublicService, async_factory, scope=scope, public=True)
+
+        service1 = await module.get_async(PublicService)
+        service2 = await module.get_async(PublicService)
+
+        assert isinstance(service1, PublicService)
+        assert service1 is service2  # Should be singleton

@@ -1,10 +1,14 @@
 """Tests for the Container class."""
 
+import asyncio
 import pytest
 from inversipy import (
     Container,
     SINGLETON,
     TRANSIENT,
+    REQUEST,
+    RequestScope,
+    AsyncSingletonScope,
     DependencyNotFoundError,
     CircularDependencyError,
     ResolutionError,
@@ -260,3 +264,162 @@ class TestChildContainers:
 
         assert child.parent is parent
         assert parent.parent is None
+
+
+class TestAsyncOperations:
+    """Test async container operations."""
+
+    @pytest.mark.asyncio
+    async def test_get_async_simple(self) -> None:
+        """Test async resolution of simple dependency."""
+        container = Container()
+        container.register(SimpleService)
+
+        service = await container.get_async(SimpleService)
+        assert isinstance(service, SimpleService)
+        assert service.get_value() == "simple"
+
+    @pytest.mark.asyncio
+    async def test_get_async_with_dependencies(self) -> None:
+        """Test async resolution with dependencies."""
+        container = Container()
+        container.register(SimpleService)
+        container.register(DependentService)
+
+        service = await container.get_async(DependentService)
+        assert isinstance(service, DependentService)
+        assert service.get_value() == "dependent:simple"
+
+    @pytest.mark.asyncio
+    async def test_get_async_async_singleton_scope(self) -> None:
+        """Test async resolution with AsyncSingletonScope."""
+        container = Container()
+        scope = AsyncSingletonScope()
+        container.register(SimpleService, scope=scope)
+
+        # First resolution
+        service1 = await container.get_async(SimpleService)
+        # Second resolution should return same instance
+        service2 = await container.get_async(SimpleService)
+
+        assert service1 is service2
+
+    @pytest.mark.asyncio
+    async def test_get_async_with_async_factory(self) -> None:
+        """Test async resolution with async factory."""
+        container = Container()
+
+        async def async_factory() -> SimpleService:
+            return SimpleService()
+
+        scope = AsyncSingletonScope()
+        container.register_factory(SimpleService, async_factory, scope=scope)
+
+        service1 = await container.get_async(SimpleService)
+        service2 = await container.get_async(SimpleService)
+
+        assert isinstance(service1, SimpleService)
+        assert service1 is service2  # Should be singleton
+
+    @pytest.mark.asyncio
+    async def test_get_async_with_nested_dependencies(self) -> None:
+        """Test async resolution with nested dependencies."""
+        container = Container()
+        container.register(SimpleService)
+        container.register(DependentService)
+        container.register(MultiDependentService)
+
+        service = await container.get_async(MultiDependentService)
+        assert isinstance(service, MultiDependentService)
+        assert service.get_value() == "multi:simple:dependent:simple"
+
+    @pytest.mark.asyncio
+    async def test_get_async_not_found(self) -> None:
+        """Test async resolution raises when dependency not found."""
+        container = Container()
+
+        with pytest.raises(DependencyNotFoundError):
+            await container.get_async(SimpleService)
+
+    @pytest.mark.asyncio
+    async def test_get_async_circular_dependency(self) -> None:
+        """Test async resolution detects circular dependencies."""
+        container = Container()
+        container.register(CircularA)
+        container.register(CircularB)
+
+        with pytest.raises(CircularDependencyError):
+            await container.get_async(CircularA)
+
+    @pytest.mark.asyncio
+    async def test_get_async_from_parent(self) -> None:
+        """Test async resolution from parent container."""
+        parent = Container(name="Parent")
+        parent.register(SimpleService)
+
+        child = parent.create_child("Child")
+        child.register(DependentService)
+
+        service = await child.get_async(DependentService)
+        assert isinstance(service, DependentService)
+        assert service.simple is not None
+
+    @pytest.mark.asyncio
+    async def test_get_async_transient_scope(self) -> None:
+        """Test async resolution with transient scope returns different instances."""
+        container = Container()
+        container.register(SimpleService, scope=TRANSIENT)
+
+        service1 = await container.get_async(SimpleService)
+        service2 = await container.get_async(SimpleService)
+
+        assert isinstance(service1, SimpleService)
+        assert isinstance(service2, SimpleService)
+        assert service1 is not service2  # Should be different instances
+
+    @pytest.mark.asyncio
+    async def test_get_async_singleton_scope(self) -> None:
+        """Test async resolution with singleton scope returns same instance."""
+        container = Container()
+        container.register(SimpleService, scope=SINGLETON)
+
+        service1 = await container.get_async(SimpleService)
+        service2 = await container.get_async(SimpleService)
+
+        assert isinstance(service1, SimpleService)
+        assert service1 is service2  # Should be same instance
+
+    @pytest.mark.asyncio
+    async def test_get_async_request_scope(self) -> None:
+        """Test async resolution with request scope isolates across tasks."""
+        scope = RequestScope()
+        container = Container()
+        container.register(SimpleService, scope=scope)
+
+        async def task1() -> SimpleService:
+            return await container.get_async(SimpleService)
+
+        async def task2() -> SimpleService:
+            return await container.get_async(SimpleService)
+
+        # Run tasks concurrently
+        service1, service2 = await asyncio.gather(task1(), task2())
+
+        assert isinstance(service1, SimpleService)
+        assert isinstance(service2, SimpleService)
+        # Each async task should get its own instance due to contextvars isolation
+        assert service1 is not service2
+
+    @pytest.mark.asyncio
+    async def test_get_async_request_scope_same_task(self) -> None:
+        """Test async resolution with request scope returns same instance within task."""
+        scope = RequestScope()
+        container = Container()
+        container.register(SimpleService, scope=scope)
+
+        # Within same async task, should get same instance
+        service1 = await container.get_async(SimpleService)
+        service2 = await container.get_async(SimpleService)
+
+        assert isinstance(service1, SimpleService)
+        assert service1 is service2  # Should be same instance within same task

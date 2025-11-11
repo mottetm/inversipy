@@ -19,7 +19,21 @@ class ModuleProtocol(Protocol):
     """
 
     def get[T](self, interface: Type[T]) -> T:
-        """Resolve a dependency.
+        """Resolve a dependency synchronously.
+
+        Args:
+            interface: The type to resolve
+
+        Returns:
+            Resolved instance of the dependency
+
+        Raises:
+            DependencyNotFoundError: If the dependency is not registered or not public
+        """
+        ...
+
+    async def get_async[T](self, interface: Type[T]) -> T:
+        """Resolve a dependency asynchronously.
 
         Args:
             interface: The type to resolve
