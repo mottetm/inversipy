@@ -59,37 +59,33 @@ class TransientScope(Scope):
 class RequestScope(Scope):
     """Scope that creates one instance per request/context using contextvars.
 
-    This scope leverages Python's contextvars module to maintain instances
-    per async context or thread. Each context (async task, thread, etc.)
-    automatically gets its own instance.
+    This scope leverages Python's contextvars module to automatically maintain
+    instances per async context or thread. Each context (async task, thread, etc.)
+    automatically gets its own isolated instance without any manual management.
+
+    The library does NOT create contexts - it only uses whatever context already
+    exists (created by your framework, asyncio, threading, etc.).
 
     Usage:
-        # Automatic context isolation in async/threaded environments
+        # Simply register with REQUEST scope
         container.register(RequestService, scope=REQUEST)
 
-        # Or use explicit context management
-        with REQUEST.context():
+        # In FastAPI, each request handler runs in its own async task
+        async def handle_request():
             service = container.get(RequestService)
+            # Automatically isolated per request - no setup needed!
+
+        # In Flask, each request runs in its own thread
+        def handle_request():
+            service = container.get(RequestService)
+            # Automatically isolated per thread
     """
 
     def __init__(self) -> None:
         # ContextVar to store the context-specific instance cache
-        self._context_instances: contextvars.ContextVar[Dict[int, Any]] = (
+        self._context_instances: contextvars.ContextVar[Optional[Dict[int, Any]]] = (
             contextvars.ContextVar('request_scope_instances', default=None)
         )
-
-    def context(self) -> "RequestScopeContext":
-        """Create a new context scope for this request.
-
-        Returns:
-            Context manager for the request scope
-
-        Example:
-            with REQUEST.context():
-                service = container.get(RequestService)
-                # service is unique to this context
-        """
-        return RequestScopeContext(self)
 
     def get(self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
         """Get or create an instance for the current context.
@@ -121,28 +117,6 @@ class RequestScope(Scope):
         instances = self._context_instances.get()
         if instances is not None:
             instances.clear()
-
-
-class RequestScopeContext:
-    """Context manager for RequestScope.
-
-    Creates a new context with isolated instances.
-    """
-
-    def __init__(self, scope: RequestScope) -> None:
-        self._scope = scope
-        self._token: Optional[contextvars.Token[Optional[Dict[int, Any]]]] = None
-
-    def __enter__(self) -> "RequestScopeContext":
-        """Enter the context and create a new isolated scope."""
-        # Create a new empty dict for this context
-        self._token = self._scope._context_instances.set({})
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Exit the context and restore the previous scope."""
-        if self._token is not None:
-            self._scope._context_instances.reset(self._token)
 
 
 class AsyncSingletonScope(AsyncScopeBase):

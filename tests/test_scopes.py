@@ -79,97 +79,71 @@ class TestTransientScope:
 
 
 class TestRequestScope:
-    """Test RequestScope with contextvars."""
+    """Test RequestScope with contextvars automatic isolation."""
 
-    def test_returns_same_instance_in_context(self) -> None:
-        """Test that request scope returns same instance within a context."""
+    def test_returns_same_instance_in_same_context(self) -> None:
+        """Test that request scope returns same instance within the same context."""
         Counter.reset_count()
         scope = RequestScope()
 
-        with scope.context():
-            instance1 = scope.get(Counter)
-            instance2 = scope.get(Counter)
-
-            assert instance1 is instance2
-            assert Counter._instance_count == 1
-
-    def test_returns_different_instances_in_different_contexts(self) -> None:
-        """Test that different contexts get different instances."""
-        Counter.reset_count()
-        scope = RequestScope()
-
-        with scope.context():
-            instance1 = scope.get(Counter)
-
-        with scope.context():
-            instance2 = scope.get(Counter)
-
-        assert instance1 is not instance2
-        assert Counter._instance_count == 2
-
-    def test_automatic_context_isolation(self) -> None:
-        """Test that instances are automatically isolated without explicit context manager."""
-        Counter.reset_count()
-        scope = RequestScope()
-
-        # Without explicit context manager, each call creates a new context
+        # Within the same context (implicit), we get the same instance
         instance1 = scope.get(Counter)
         instance2 = scope.get(Counter)
 
-        # Within the same implicit context, we get the same instance
         assert instance1 is instance2
         assert Counter._instance_count == 1
-
-    def test_nested_contexts(self) -> None:
-        """Test that nested contexts are properly isolated."""
-        Counter.reset_count()
-        scope = RequestScope()
-
-        with scope.context():
-            instance1 = scope.get(Counter)
-
-            with scope.context():
-                instance2 = scope.get(Counter)
-                assert instance1 is not instance2
-
-            # Back to outer context
-            instance3 = scope.get(Counter)
-            assert instance1 is instance3
-
-        assert Counter._instance_count == 2
 
     def test_reset_clears_current_context(self) -> None:
         """Test that reset clears instances in the current context."""
         Counter.reset_count()
         scope = RequestScope()
 
-        with scope.context():
-            instance1 = scope.get(Counter)
-            scope.reset()
-            instance2 = scope.get(Counter)
+        instance1 = scope.get(Counter)
+        scope.reset()
+        instance2 = scope.get(Counter)
 
-            assert instance1 is not instance2
-            assert Counter._instance_count == 2
+        # After reset, a new instance is created
+        assert instance1 is not instance2
+        assert Counter._instance_count == 2
 
     @pytest.mark.asyncio
-    async def test_async_context_isolation(self) -> None:
-        """Test that async contexts are properly isolated."""
+    async def test_async_task_isolation(self) -> None:
+        """Test that different async tasks get isolated instances automatically."""
         Counter.reset_count()
         scope = RequestScope()
 
         async def task1() -> Counter:
-            with scope.context():
-                return scope.get(Counter)
+            # Each async task runs in its own context
+            return scope.get(Counter)
 
         async def task2() -> Counter:
-            with scope.context():
-                return scope.get(Counter)
+            # Each async task runs in its own context
+            return scope.get(Counter)
 
+        # Run tasks concurrently
         instance1, instance2 = await asyncio.gather(task1(), task2())
 
-        # Each async task gets its own instance
+        # Each async task gets its own instance automatically
         assert instance1 is not instance2
         assert Counter._instance_count == 2
+
+    @pytest.mark.asyncio
+    async def test_same_instance_within_async_task(self) -> None:
+        """Test that same async task gets same instance."""
+        Counter.reset_count()
+        scope = RequestScope()
+
+        async def task() -> tuple[Counter, Counter]:
+            # Within the same task, we should get the same instance
+            instance1 = scope.get(Counter)
+            instance2 = scope.get(Counter)
+            return instance1, instance2
+
+        instance1, instance2 = await task()
+
+        # Same task should get same instance
+        assert instance1 is instance2
+        assert Counter._instance_count == 1
 
 
 class TestAsyncSingletonScope:
