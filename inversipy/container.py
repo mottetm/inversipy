@@ -19,7 +19,7 @@ from .exceptions import (
     ValidationError,
 )
 from .scopes import TRANSIENT, SingletonScope
-from .types import DependencyKey, Factory, Scope
+from .types import DependencyKey, Factory, Scope, ModuleProtocol
 
 
 class Binding:
@@ -98,7 +98,7 @@ class Container:
         """
         self._name = name
         self._bindings: Dict[DependencyKey, Binding] = {}
-        self._modules: List[Any] = []  # List of registered modules
+        self._modules: List[ModuleProtocol] = []  # List of registered modules
         self._parent = parent
         self._resolution_stack: List[Type[Any]] = []
 
@@ -188,14 +188,14 @@ class Container:
         """
         return self.register(interface, instance=instance, scope=SingletonScope())
 
-    def register_module(self, module: Any) -> "Container":
+    def register_module(self, module: ModuleProtocol) -> "Container":
         """Register a module as a provider of dependencies.
 
         The module will be consulted when resolving dependencies. Only the module's
         public dependencies are accessible to the container.
 
         Args:
-            module: Module to register
+            module: Module to register (must implement ModuleProtocol)
 
         Returns:
             Self for chaining

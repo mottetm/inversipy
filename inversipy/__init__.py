@@ -20,7 +20,7 @@ from .scopes import (
     TRANSIENT,
     REQUEST,
 )
-from .types import Scope, AsyncScope, Factory, DependencyKey
+from .types import Scope, AsyncScope, Factory, DependencyKey, ModuleProtocol
 from .decorators import injectable, singleton, transient, inject, Inject
 from .exceptions import (
     InversipyError,
@@ -53,6 +53,7 @@ __all__ = [
     # Types
     "Factory",
     "DependencyKey",
+    "ModuleProtocol",
     # Decorators
     "injectable",
     "singleton",

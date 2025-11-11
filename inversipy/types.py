@@ -1,9 +1,43 @@
 """Type definitions and protocols for the inversipy library."""
 
-from typing import Any, Callable, Protocol, Union
+from typing import Any, Callable, Protocol, Type, Union
 from abc import ABC, abstractmethod
 
 type Factory[T] = Callable[..., T]
+
+
+class ModuleProtocol(Protocol):
+    """Protocol defining the interface required for module registration.
+
+    Any object implementing this protocol can be registered with a Container
+    using register_module(). This provides type safety and clear documentation
+    of the module contract.
+    """
+
+    def is_public(self, interface: Type[Any]) -> bool:
+        """Check if a dependency is publicly accessible.
+
+        Args:
+            interface: The type to check
+
+        Returns:
+            True if the dependency is public, False otherwise
+        """
+        ...
+
+    def get[T](self, interface: Type[T]) -> T:
+        """Resolve a dependency.
+
+        Args:
+            interface: The type to resolve
+
+        Returns:
+            Resolved instance of the dependency
+
+        Raises:
+            DependencyNotFoundError: If the dependency is not registered
+        """
+        ...
 
 
 class Scope(ABC):
