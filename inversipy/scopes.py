@@ -1,6 +1,7 @@
 """Scope implementations for dependency injection."""
 
 import asyncio
+import contextvars
 from typing import Any, Optional, Dict
 from .types import Scope, AsyncScope as AsyncScopeBase, Factory, T
 
@@ -56,31 +57,39 @@ class TransientScope(Scope):
 
 
 class RequestScope(Scope):
-    """Scope that creates one instance per request/context.
+    """Scope that creates one instance per request/context using contextvars.
 
-    This scope maintains instances per context identifier.
-    Useful for web frameworks where you want one instance per request.
+    This scope leverages Python's contextvars module to maintain instances
+    per async context or thread. Each context (async task, thread, etc.)
+    automatically gets its own instance.
+
+    Usage:
+        # Automatic context isolation in async/threaded environments
+        container.register(RequestService, scope=REQUEST)
+
+        # Or use explicit context management
+        with REQUEST.context():
+            service = container.get(RequestService)
     """
 
     def __init__(self) -> None:
-        self._instances: Dict[str, Any] = {}
-        self._current_context: Optional[str] = None
+        # ContextVar to store the context-specific instance cache
+        self._context_instances: contextvars.ContextVar[Dict[int, Any]] = (
+            contextvars.ContextVar('request_scope_instances', default=None)
+        )
 
-    def set_context(self, context_id: str) -> None:
-        """Set the current context identifier.
+    def context(self) -> "RequestScopeContext":
+        """Create a new context scope for this request.
 
-        Args:
-            context_id: Unique identifier for the current context
+        Returns:
+            Context manager for the request scope
+
+        Example:
+            with REQUEST.context():
+                service = container.get(RequestService)
+                # service is unique to this context
         """
-        self._current_context = context_id
-
-    def clear_context(self, context_id: str) -> None:
-        """Clear instances for a specific context.
-
-        Args:
-            context_id: Context identifier to clear
-        """
-        self._instances.pop(context_id, None)
+        return RequestScopeContext(self)
 
     def get(self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
         """Get or create an instance for the current context.
@@ -92,22 +101,48 @@ class RequestScope(Scope):
 
         Returns:
             Instance for the current context
-
-        Raises:
-            RuntimeError: If no context is set
         """
-        if self._current_context is None:
-            raise RuntimeError("No context set for RequestScope")
+        # Get or create the instances dict for this context
+        instances = self._context_instances.get()
+        if instances is None:
+            instances = {}
+            self._context_instances.set(instances)
 
-        if self._current_context not in self._instances:
-            self._instances[self._current_context] = factory(*args, **kwargs)
+        # Use factory id as key
+        factory_id = id(factory)
 
-        return self._instances[self._current_context]
+        if factory_id not in instances:
+            instances[factory_id] = factory(*args, **kwargs)
+
+        return instances[factory_id]
 
     def reset(self) -> None:
-        """Clear all instances and reset the context."""
-        self._instances.clear()
-        self._current_context = None
+        """Clear all instances in the current context."""
+        instances = self._context_instances.get()
+        if instances is not None:
+            instances.clear()
+
+
+class RequestScopeContext:
+    """Context manager for RequestScope.
+
+    Creates a new context with isolated instances.
+    """
+
+    def __init__(self, scope: RequestScope) -> None:
+        self._scope = scope
+        self._token: Optional[contextvars.Token[Optional[Dict[int, Any]]]] = None
+
+    def __enter__(self) -> "RequestScopeContext":
+        """Enter the context and create a new isolated scope."""
+        # Create a new empty dict for this context
+        self._token = self._scope._context_instances.set({})
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit the context and restore the previous scope."""
+        if self._token is not None:
+            self._scope._context_instances.reset(self._token)
 
 
 class AsyncSingletonScope(AsyncScopeBase):

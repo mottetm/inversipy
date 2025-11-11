@@ -134,7 +134,7 @@ assert handler1 is not handler2  # Different instances
 
 #### Request Scope
 
-Creates one instance per request/context:
+Creates one instance per request/context using Python's `contextvars` module. This automatically isolates instances per async task or thread:
 
 ```python
 from inversipy import Container, REQUEST
@@ -142,15 +142,17 @@ from inversipy import Container, REQUEST
 container = Container()
 container.register(RequestContext, scope=REQUEST)
 
-# Set context for current request
-REQUEST.set_context("request-123")
+# Use context manager for explicit context isolation
+with REQUEST.context():
+    ctx1 = container.get(RequestContext)
+    ctx2 = container.get(RequestContext)
+    assert ctx1 is ctx2  # Same instance within context
 
-ctx1 = container.get(RequestContext)
-ctx2 = container.get(RequestContext)
-assert ctx1 is ctx2  # Same instance within request
-
-# Clean up after request
-REQUEST.clear_context("request-123")
+# Or rely on automatic context isolation
+# Each async task or thread automatically gets its own context
+async def handle_request():
+    service = container.get(RequestService)
+    # Each request gets its own service instance
 ```
 
 #### Async Singleton Scope
@@ -362,6 +364,53 @@ def handle_request(request):
     handler = request_container.get(RequestHandler)
     return handler.handle()
 ```
+
+### RequestScope with Web Frameworks
+
+RequestScope uses `contextvars` for automatic context isolation, making it perfect for web frameworks:
+
+```python
+from inversipy import Container, REQUEST
+from flask import Flask
+
+app = Flask(__name__)
+container = Container()
+
+# Register request-scoped services
+container.register(RequestLogger, scope=REQUEST)
+container.register(CurrentUser, scope=REQUEST)
+
+@app.route('/api/users')
+def get_users():
+    # Each request automatically gets isolated instances
+    with REQUEST.context():
+        logger = container.get(RequestLogger)
+        user = container.get(CurrentUser)
+
+        logger.log(f"Request by {user.name}")
+        return {"users": [...]}
+
+# Works seamlessly with async frameworks too
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/api/users")
+async def get_users():
+    # Async tasks are automatically isolated
+    with REQUEST.context():
+        logger = container.get(RequestLogger)
+        # Each concurrent request has its own logger instance
+        await logger.log_async("Fetching users")
+        return {"users": [...]}
+```
+
+The `contextvars`-based implementation provides several benefits:
+
+- **Thread-safe**: Each thread gets its own context automatically
+- **Async-aware**: Works seamlessly with asyncio and concurrent requests
+- **No manual management**: Context isolation happens automatically
+- **Nested contexts**: Supports nested context scopes when needed
 
 ### Testing with Containers
 
