@@ -1,15 +1,13 @@
 """Decorators for dependency injection."""
 
-from typing import Any, Callable, Optional, Type, TypeVar
+from typing import Any, Callable, Optional, Type
 
 from .container import Container
 from .scopes import SINGLETON, TRANSIENT
 from .types import Scope
 
-T = TypeVar("T")
 
-
-def injectable(
+def injectable[T](
     container: Container,
     interface: Optional[Type[Any]] = None,
     scope: Scope = TRANSIENT,
@@ -40,7 +38,7 @@ def injectable(
     return decorator
 
 
-def singleton(
+def singleton[T](
     container: Container, interface: Optional[Type[Any]] = None
 ) -> Callable[[Type[T]], Type[T]]:
     """Decorator to register a class as a singleton.
@@ -62,7 +60,7 @@ def singleton(
     return injectable(container, interface, SINGLETON)
 
 
-def transient(
+def transient[T](
     container: Container, interface: Optional[Type[Any]] = None
 ) -> Callable[[Type[T]], Type[T]]:
     """Decorator to register a class as transient (new instance each time).
@@ -84,7 +82,7 @@ def transient(
     return injectable(container, interface, TRANSIENT)
 
 
-def inject(container: Container) -> Callable[[Callable[..., T]], Callable[..., T]]:
+def inject[T](container: Container) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """Decorator to inject dependencies into a function.
 
     Args:
@@ -145,7 +143,7 @@ def inject(container: Container) -> Callable[[Callable[..., T]], Callable[..., T
     return decorator
 
 
-class Inject:
+class Inject[T]:
     """Descriptor for property-based dependency injection.
 
     Example:

@@ -3,7 +3,7 @@
 import asyncio
 import contextvars
 from typing import Any, Optional, Dict
-from .types import Scope, AsyncScope as AsyncScopeBase, Factory, T
+from .types import Scope, AsyncScope as AsyncScopeBase, Factory
 
 
 class SingletonScope(Scope):
@@ -13,7 +13,7 @@ class SingletonScope(Scope):
         self._instance: Optional[Any] = None
         self._initialized = False
 
-    def get(self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
+    def get[T](self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
         """Get or create the singleton instance.
 
         Args:
@@ -38,7 +38,7 @@ class SingletonScope(Scope):
 class TransientScope(Scope):
     """Scope that creates a new instance every time."""
 
-    def get(self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
+    def get[T](self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
         """Create a new instance.
 
         Args:
@@ -87,7 +87,7 @@ class RequestScope(Scope):
             contextvars.ContextVar('request_scope_instances', default=None)
         )
 
-    def get(self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
+    def get[T](self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
         """Get or create an instance for the current context.
 
         Args:
@@ -127,7 +127,7 @@ class AsyncSingletonScope(AsyncScopeBase):
         self._initialized = False
         self._lock = asyncio.Lock()
 
-    async def get_async(self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
+    async def get_async[T](self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
         """Get or create the singleton instance asynchronously.
 
         Args:
@@ -150,7 +150,7 @@ class AsyncSingletonScope(AsyncScopeBase):
                     self._initialized = True
         return self._instance  # type: ignore
 
-    def get(self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
+    def get[T](self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
         """Synchronous get is not supported for async scope.
 
         Raises:

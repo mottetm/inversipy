@@ -1,17 +1,16 @@
 """Type definitions and protocols for the inversipy library."""
 
-from typing import Any, Callable, Protocol, TypeVar, Union
+from typing import Any, Callable, Protocol, Union
 from abc import ABC, abstractmethod
 
-T = TypeVar("T")
-Factory = Callable[..., T]
+type Factory[T] = Callable[..., T]
 
 
 class Scope(ABC):
     """Abstract base class for dependency scopes."""
 
     @abstractmethod
-    def get(self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
+    def get[T](self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
         """Get an instance using the factory function.
 
         Args:
@@ -34,7 +33,7 @@ class AsyncScope(Scope):
     """Abstract base class for async scopes."""
 
     @abstractmethod
-    async def get_async(self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
+    async def get_async[T](self, factory: Factory[T], *args: Any, **kwargs: Any) -> T:
         """Asynchronously get an instance using the factory function.
 
         Args:
@@ -48,7 +47,7 @@ class AsyncScope(Scope):
         pass
 
 
-class Provider(Protocol[T]):
+class Provider[T](Protocol):
     """Protocol for dependency providers."""
 
     def __call__(self) -> T:

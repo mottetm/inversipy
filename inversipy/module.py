@@ -1,13 +1,11 @@
 """Module implementation for organizing dependencies."""
 
-from typing import Any, Callable, List, Optional, Set, Type, TypeVar
+from typing import Any, Callable, List, Optional, Set, Type
 
 from .container import Container
 from .exceptions import DependencyNotFoundError, RegistrationError
 from .scopes import TRANSIENT
 from .types import Factory, Scope
-
-T = TypeVar("T")
 
 
 class Module:
@@ -32,7 +30,7 @@ class Module:
         """Get the module name."""
         return self._name
 
-    def register(
+    def register[T](
         self,
         interface: Type[T],
         implementation: Optional[Type[T]] = None,
@@ -67,7 +65,7 @@ class Module:
 
         return self
 
-    def register_factory(
+    def register_factory[T](
         self,
         interface: Type[T],
         factory: Factory[T],
@@ -87,7 +85,7 @@ class Module:
         """
         return self.register(interface, factory=factory, scope=scope, public=public)
 
-    def register_instance(
+    def register_instance[T](
         self, interface: Type[T], instance: T, public: bool = False
     ) -> "Module":
         """Register a pre-created instance.
@@ -200,7 +198,7 @@ class ModuleBuilder:
         """
         self._module = Module(name)
 
-    def bind(
+    def bind[T](
         self,
         interface: Type[T],
         implementation: Optional[Type[T]] = None,
@@ -230,7 +228,7 @@ class ModuleBuilder:
         )
         return self
 
-    def bind_public(
+    def bind_public[T](
         self,
         interface: Type[T],
         implementation: Optional[Type[T]] = None,

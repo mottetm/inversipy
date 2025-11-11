@@ -8,7 +8,6 @@ from typing import (
     List,
     Optional,
     Type,
-    TypeVar,
     Union,
     get_type_hints,
     cast,
@@ -23,8 +22,6 @@ from .exceptions import (
 )
 from .scopes import SINGLETON, TRANSIENT, SingletonScope
 from .types import DependencyKey, Factory, Scope
-
-T = TypeVar("T")
 
 
 class Binding:
@@ -106,7 +103,7 @@ class Container:
         """Get the parent container."""
         return self._parent
 
-    def register(
+    def register[T](
         self,
         interface: Type[T],
         implementation: Optional[Type[T]] = None,
@@ -156,7 +153,7 @@ class Container:
         self._bindings[interface] = binding
         return self
 
-    def register_factory(
+    def register_factory[T](
         self, interface: Type[T], factory: Factory[T], scope: Scope = TRANSIENT
     ) -> "Container":
         """Register a factory function for a dependency.
@@ -171,7 +168,7 @@ class Container:
         """
         return self.register(interface, factory=factory, scope=scope)
 
-    def register_instance(self, interface: Type[T], instance: T) -> "Container":
+    def register_instance[T](self, interface: Type[T], instance: T) -> "Container":
         """Register a pre-created instance.
 
         Args:
@@ -208,7 +205,7 @@ class Container:
         self._modules.append(module)
         return self
 
-    def get(self, interface: Type[T]) -> T:
+    def get[T](self, interface: Type[T]) -> T:
         """Resolve a dependency from the container.
 
         Args:
@@ -261,7 +258,7 @@ class Container:
             # Remove from resolution stack
             self._resolution_stack.pop()
 
-    def try_get(self, interface: Type[T]) -> Optional[T]:
+    def try_get[T](self, interface: Type[T]) -> Optional[T]:
         """Try to resolve a dependency, returning None if not found.
 
         Args:
@@ -296,7 +293,7 @@ class Container:
             return self._parent.has(interface)
         return False
 
-    def _create_instance(self, cls: Type[T]) -> T:
+    def _create_instance[T](self, cls: Type[T]) -> T:
         """Create an instance of a class, resolving its dependencies.
 
         Args:
