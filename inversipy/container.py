@@ -241,16 +241,14 @@ class Container:
         # If not found, try registered modules
         if binding is None:
             for module in self._modules:
-                if module.is_public(interface):
-                    # Add to resolution stack
-                    self._resolution_stack.append(interface)
-                    try:
-                        # Resolve from the module
-                        instance = module.get(interface)
-                        return cast(T, instance)
-                    finally:
-                        # Remove from resolution stack
-                        self._resolution_stack.pop()
+                try:
+                    # Try to resolve from the module
+                    # The module will enforce its own public/private access rules
+                    instance = module.get(interface)
+                    return cast(T, instance)
+                except DependencyNotFoundError:
+                    # This module doesn't have it (or it's private), try next module
+                    continue
 
         # If not found, try parent container
         if binding is None and self._parent is not None:
@@ -298,7 +296,7 @@ class Container:
 
         # Check registered modules
         for module in self._modules:
-            if module.is_public(interface):
+            if module.has(interface):
                 return True
 
         # Check parent if exists
@@ -427,8 +425,13 @@ class Container:
                         param_type = type_hints.get(param_name)
 
                         if param_type is not None:
-                            # Check if dependency is registered
-                            if not self.has(param_type):
+                            # Check if dependency is registered (check all dependencies, not just public)
+                            has_dependency = (
+                                param_type in self._bindings
+                                or any(param_type in m._bindings for m in self._modules if hasattr(m, '_bindings'))
+                                or (self._parent is not None and self._parent.has(param_type))
+                            )
+                            if not has_dependency:
                                 # Check if parameter has a default
                                 if param.default is inspect.Parameter.empty:
                                     type_name = getattr(param_type, "__name__", str(param_type))

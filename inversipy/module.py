@@ -3,7 +3,7 @@
 from typing import Any, List, Optional, Set, Type
 
 from .container import Container
-from .exceptions import RegistrationError
+from .exceptions import DependencyNotFoundError, RegistrationError
 from .scopes import TRANSIENT
 from .types import Factory, Scope
 
@@ -120,6 +120,47 @@ class Module(Container):
             self._public_keys.add(interface)
 
         return self
+
+    def get[T](self, interface: Type[T]) -> T:
+        """Resolve a dependency from the module.
+
+        When called externally (from a Container), only public dependencies
+        are accessible. When called internally (during dependency resolution),
+        all dependencies are accessible.
+
+        Args:
+            interface: The type to resolve
+
+        Returns:
+            Resolved instance
+
+        Raises:
+            DependencyNotFoundError: If dependency is not registered or not public
+        """
+        # If we're in the middle of resolving something (stack not empty),
+        # this is an internal call, so allow access to private dependencies
+        if self._resolution_stack:
+            return super().get(interface)
+
+        # External call - check if dependency is public
+        if not self.is_public(interface):
+            raise DependencyNotFoundError(interface, self._name)
+
+        # Public dependency - resolve it
+        return super().get(interface)
+
+    def has(self, interface: Type[Any]) -> bool:
+        """Check if a dependency is publicly available.
+
+        This satisfies the ModuleProtocol requirement.
+
+        Args:
+            interface: The type to check
+
+        Returns:
+            True if the dependency is registered and public, False otherwise
+        """
+        return self.is_public(interface)
 
     def is_public(self, interface: Type[Any]) -> bool:
         """Check if a dependency is public.

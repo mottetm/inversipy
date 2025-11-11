@@ -12,18 +12,11 @@ class ModuleProtocol(Protocol):
     Any object implementing this protocol can be registered with a Container
     using register_module(). This provides type safety and clear documentation
     of the module contract.
+
+    The module is responsible for enforcing its own access control rules.
+    If a requested dependency is not publicly accessible, get() should raise
+    DependencyNotFoundError, and has() should return False.
     """
-
-    def is_public(self, interface: Type[Any]) -> bool:
-        """Check if a dependency is publicly accessible.
-
-        Args:
-            interface: The type to check
-
-        Returns:
-            True if the dependency is public, False otherwise
-        """
-        ...
 
     def get[T](self, interface: Type[T]) -> T:
         """Resolve a dependency.
@@ -35,7 +28,18 @@ class ModuleProtocol(Protocol):
             Resolved instance of the dependency
 
         Raises:
-            DependencyNotFoundError: If the dependency is not registered
+            DependencyNotFoundError: If the dependency is not registered or not public
+        """
+        ...
+
+    def has(self, interface: Type[Any]) -> bool:
+        """Check if a dependency is publicly available without creating an instance.
+
+        Args:
+            interface: The type to check
+
+        Returns:
+            True if the dependency is registered and public, False otherwise
         """
         ...
 
