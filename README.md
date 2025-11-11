@@ -65,6 +65,15 @@ users = service.list_users()
 
 ## Core Concepts
 
+### Architecture Overview
+
+Inversipy's architecture is built on two core abstractions:
+
+- **Module**: The base class that provides dependency registration, resolution, and composition. Modules support public/private access control and can register other modules.
+- **Container**: Extends Module with all dependencies public by default and adds parent-child hierarchy support for dependency inheritance.
+
+This design eliminates code duplication while providing flexibility - use Module when you need encapsulation, and Container when you need simplicity and hierarchy.
+
 ### Container
 
 The `Container` is the main component that manages dependency registration and resolution.
@@ -208,6 +217,33 @@ user_repo = container.get(UserRepository)  # ✓ Works
 # Module remains live - add new dependencies dynamically
 db_module.register(CacheService, public=True)
 cache = container.get(CacheService)  # ✓ Works! Module is still connected
+```
+
+Modules can also register other modules for composition:
+
+```python
+# Create specialized modules
+auth_module = Module("Auth")
+auth_module.register(AuthService, public=True)
+auth_module.register(TokenValidator, public=False)
+
+db_module = Module("Database")
+db_module.register(Database, public=True)
+
+# Create an app module that composes other modules
+app_module = Module("App")
+app_module.register_module(auth_module)  # Import auth module
+app_module.register_module(db_module)    # Import db module
+app_module.register(AppService, public=True)
+
+# App module can access public dependencies from registered modules
+container = Container()
+container.register_module(app_module)
+
+# All public dependencies are accessible
+auth = container.get(AuthService)  # From auth_module
+db = container.get(Database)       # From db_module
+app = container.get(AppService)    # From app_module
 ```
 
 Using ModuleBuilder:
