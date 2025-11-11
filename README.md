@@ -69,10 +69,10 @@ users = service.list_users()
 
 Inversipy's architecture is built on two core abstractions:
 
-- **Module**: The base class that provides dependency registration, resolution, and composition. Modules support public/private access control and can register other modules.
-- **Container**: Extends Module with all dependencies public by default and adds parent-child hierarchy support for dependency inheritance.
+- **Container**: The base class that provides dependency registration, resolution, and composition. Supports parent-child hierarchies and module registration. All dependencies are public by default.
+- **Module**: Extends Container to add public/private access control. Modules can selectively expose dependencies and register other modules for composition.
 
-This design eliminates code duplication while providing flexibility - use Module when you need encapsulation, and Container when you need simplicity and hierarchy.
+This design eliminates code duplication while providing proper specialization - use Container for simplicity, and Module when you need encapsulation.
 
 ### Container
 
