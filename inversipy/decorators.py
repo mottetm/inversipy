@@ -1,6 +1,7 @@
 """Decorators for dependency injection."""
 
-from typing import Any, Callable, Optional, Type
+import inspect
+from typing import Any, Callable, Optional, Type, get_type_hints
 
 from .container import Container
 from .scopes import SINGLETON, TRANSIENT
@@ -98,9 +99,6 @@ def inject[T](container: Container) -> Callable[[Callable[..., T]], Callable[...
             return service.do_something()
         ```
     """
-    from typing import get_type_hints
-    import inspect
-
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         def wrapper(*args: Any, **kwargs: Any) -> T:
             # Get type hints for the function

@@ -18,7 +18,7 @@ from .exceptions import (
     ResolutionError,
     ValidationError,
 )
-from .scopes import TRANSIENT, SingletonScope
+from .scopes import TRANSIENT, SingletonScope, TransientScope, RequestScope
 from .types import DependencyKey, Factory, Scope, ModuleProtocol
 
 
@@ -140,8 +140,6 @@ class Container:
             implementation = interface
 
         # Create a new scope instance to avoid sharing state between bindings
-        from .scopes import SingletonScope, TransientScope, RequestScope
-
         actual_scope = scope
         if isinstance(scope, SingletonScope):
             actual_scope = SingletonScope()
