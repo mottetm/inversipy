@@ -9,8 +9,8 @@ Inversipy provides a flexible dependency injection container with support for:
 - Decorator-based registration
 """
 
-from .container import Container
-from .module import Module, ModuleBuilder, Binding
+from .container import Container, Binding
+from .module import Module, ModuleBuilder
 from .scopes import (
     SingletonScope,
     TransientScope,
