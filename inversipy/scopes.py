@@ -5,7 +5,7 @@ import contextvars
 from abc import ABCMeta
 from enum import Enum, EnumMeta
 from typing import Any, Optional, Dict
-from .types import Scope, AsyncScope as AsyncScopeBase, Factory
+from .types import Scope, Factory
 
 
 class ScopeEnumMeta(EnumMeta, ABCMeta):
