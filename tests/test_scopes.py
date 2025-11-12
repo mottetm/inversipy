@@ -177,10 +177,12 @@ class TestAsyncSingletonScope:
         assert Counter._instance_count == 1
 
     def test_sync_get_raises(self) -> None:
-        """Test that synchronous get raises NotImplementedError."""
+        """Test that synchronous get raises ResolutionError."""
+        from inversipy import ResolutionError
+
         scope = AsyncSingletonScope()
 
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(ResolutionError, match="Cannot use synchronous get"):
             scope.get(Counter)
 
     @pytest.mark.asyncio

@@ -426,11 +426,13 @@ class TestAsyncOperations:
 
     def test_sync_get_with_async_scope_raises(self) -> None:
         """Test that synchronous get() raises when dependency uses AsyncSingletonScope."""
+        from inversipy import ResolutionError
+
         container = Container()
         scope = AsyncSingletonScope()
         container.register(SimpleService, scope=scope)
 
-        with pytest.raises(NotImplementedError, match="Use get_async for AsyncSingletonScope"):
+        with pytest.raises(ResolutionError, match="Cannot use synchronous get.*Use get_async"):
             container.get(SimpleService)
 
     @pytest.mark.asyncio

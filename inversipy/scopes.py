@@ -154,9 +154,13 @@ class AsyncSingletonScope(AsyncScopeBase):
         """Synchronous get is not supported for async scope.
 
         Raises:
-            NotImplementedError: Always raised
+            ResolutionError: Always raised
         """
-        raise NotImplementedError("Use get_async for AsyncSingletonScope")
+        from .exceptions import ResolutionError
+        raise ResolutionError(
+            "Cannot use synchronous get() with AsyncSingletonScope. "
+            "Use get_async() instead for dependencies with async scopes."
+        )
 
     def reset(self) -> None:
         """Reset the singleton instance."""
@@ -164,7 +168,34 @@ class AsyncSingletonScope(AsyncScopeBase):
         self._initialized = False
 
 
-# Convenience instances for common use cases
-SINGLETON = SingletonScope()
-TRANSIENT = TransientScope()
-REQUEST = RequestScope()
+class Scopes:
+    """Collection of predefined scope instances.
+
+    Provides convenient access to all available scopes:
+    - SINGLETON: Single instance shared across the entire application
+    - TRANSIENT: New instance created for each resolution
+    - REQUEST: One instance per request/context (thread or async task)
+    - ASYNC_SINGLETON: Async-safe singleton for async factories
+
+    Example:
+        ```python
+        from inversipy import Container, Scopes
+
+        # Register with different scopes
+        container.register(DatabaseService, scope=Scopes.SINGLETON)
+        container.register(RequestHandler, scope=Scopes.TRANSIENT)
+        container.register(UserSession, scope=Scopes.REQUEST)
+        container.register(AsyncService, scope=Scopes.ASYNC_SINGLETON)
+        ```
+    """
+    SINGLETON = SingletonScope()
+    TRANSIENT = TransientScope()
+    REQUEST = RequestScope()
+    ASYNC_SINGLETON = AsyncSingletonScope()
+
+
+# Deprecated: Individual scope instances for backward compatibility
+# Use Scopes.SINGLETON, Scopes.TRANSIENT, etc. instead
+SINGLETON = Scopes.SINGLETON
+TRANSIENT = Scopes.TRANSIENT
+REQUEST = Scopes.REQUEST
