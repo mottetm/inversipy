@@ -17,6 +17,8 @@ from .scopes import (
     TransientScope,
     RequestScope,
     AsyncSingletonScope,
+    AsyncTransientScope,
+    AsyncRequestScope,
     SINGLETON,
     TRANSIENT,
     REQUEST,
@@ -49,6 +51,8 @@ __all__ = [
     "TransientScope",
     "RequestScope",
     "AsyncSingletonScope",
+    "AsyncTransientScope",
+    "AsyncRequestScope",
     "SINGLETON",  # Deprecated: use Scopes.SINGLETON
     "TRANSIENT",  # Deprecated: use Scopes.TRANSIENT
     "REQUEST",    # Deprecated: use Scopes.REQUEST

@@ -108,17 +108,22 @@ class Binding:
 
         # Use the scope to manage instance lifecycle
         from .types import AsyncScope
-        if isinstance(self.scope, AsyncScope):
-            return await self.scope.get_async(factory_func)
+        from enum import Enum
+
+        # Get the actual scope instance (handle Scopes enum members)
+        actual_scope = self.scope.value if isinstance(self.scope, Enum) else self.scope
+
+        if isinstance(actual_scope, AsyncScope):
+            return await actual_scope.get_async(factory_func)
         else:
             # For non-async scopes with async resolution, handle caching manually
             # because scopes cache coroutines instead of awaited results
 
             # Determine cache key based on scope type
             cache_key = None
-            if isinstance(self.scope, SingletonScope):
+            if isinstance(actual_scope, SingletonScope):
                 cache_key = "singleton"
-            elif isinstance(self.scope, RequestScope):
+            elif isinstance(actual_scope, RequestScope):
                 # For RequestScope, use asyncio task id as cache key
                 # Each async task gets its own context automatically
                 current_task = asyncio.current_task()
@@ -126,7 +131,7 @@ class Binding:
                     cache_key = f"request_{id(current_task)}"
                 else:
                     cache_key = "request_main"
-            elif isinstance(self.scope, TransientScope):
+            elif isinstance(actual_scope, TransientScope):
                 # No caching for transient
                 cache_key = None
             else:
