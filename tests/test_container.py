@@ -423,3 +423,40 @@ class TestAsyncOperations:
 
         assert isinstance(service1, SimpleService)
         assert service1 is service2  # Should be same instance within same task
+
+    def test_sync_get_with_async_scope_raises(self) -> None:
+        """Test that synchronous get() raises when dependency uses AsyncSingletonScope."""
+        container = Container()
+        scope = AsyncSingletonScope()
+        container.register(SimpleService, scope=scope)
+
+        with pytest.raises(NotImplementedError, match="Use get_async for AsyncSingletonScope"):
+            container.get(SimpleService)
+
+    @pytest.mark.asyncio
+    async def test_async_get_with_sync_scopes(self) -> None:
+        """Test that get_async() works correctly with all synchronous scopes."""
+        container = Container()
+
+        # Test with SINGLETON
+        container.register(SimpleService, scope=SINGLETON)
+        service1 = await container.get_async(SimpleService)
+        service2 = await container.get_async(SimpleService)
+        assert service1 is service2
+
+        # Test with TRANSIENT
+        class AnotherService:
+            pass
+        container.register(AnotherService, scope=TRANSIENT)
+        service3 = await container.get_async(AnotherService)
+        service4 = await container.get_async(AnotherService)
+        assert service3 is not service4
+
+        # Test with REQUEST
+        scope = RequestScope()
+        class ThirdService:
+            pass
+        container.register(ThirdService, scope=scope)
+        service5 = await container.get_async(ThirdService)
+        service6 = await container.get_async(ThirdService)
+        assert service5 is service6  # Same task, same instance
