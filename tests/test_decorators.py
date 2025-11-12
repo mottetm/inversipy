@@ -1,7 +1,7 @@
 """Tests for decorators."""
 
 import pytest
-from inversipy import Container, injectable, singleton, transient, inject, Inject
+from inversipy import Container, Scopes, injectable, singleton, transient, inject, Inject
 
 
 class SimpleService:
@@ -55,7 +55,7 @@ class TestInjectableDecorator:
         """Test @injectable with scope."""
         container = Container()
 
-        @injectable(container, scope=)
+        @injectable(container, scope=Scopes.SINGLETON)
         class TestService:
             pass
 

@@ -112,7 +112,7 @@ class TestModuleLoading:
     def test_module_preserves_scopes(self) -> None:
         """Test that module preserves dependency scopes."""
         module = Module("TestModule")
-        module.register(PublicService, public=True, scope=)
+        module.register(PublicService, public=True, scope=Scopes.SINGLETON)
 
         container = Container()
         container.register_module(module)
@@ -204,7 +204,7 @@ class TestModuleBuilder:
         """Test builder with different scopes."""
         module = (
             ModuleBuilder("TestModule")
-            .bind_public(PublicService, scope=)
+            .bind_public(PublicService, scope=Scopes.SINGLETON)
             .build()
         )
 
@@ -278,7 +278,7 @@ class TestAsyncModuleOperations:
     async def test_get_async_with_async_singleton(self) -> None:
         """Test async resolution with in module."""
         module = Module("TestModule")
-        scope =()
+        scope = Scopes.SINGLETON
         module.register(PublicService, scope=scope, public=True)
 
         service1 = await module.get_async(PublicService)
@@ -319,7 +319,7 @@ class TestAsyncModuleOperations:
         async def async_factory() -> PublicService:
             return PublicService()
 
-        scope =()
+        scope = Scopes.SINGLETON
         module.register_factory(PublicService, async_factory, scope=scope, public=True)
 
         service1 = await module.get_async(PublicService)

@@ -57,7 +57,7 @@ def singleton[T](
             pass
         ```
     """
-    return injectable(container, interface, SINGLETON)
+    return injectable(container, interface, Scopes.SINGLETON)
 
 
 def transient[T](
@@ -79,7 +79,7 @@ def transient[T](
             pass
         ```
     """
-    return injectable(container, interface, TRANSIENT)
+    return injectable(container, interface, Scopes.TRANSIENT)
 
 
 def inject[T](container: Container) -> Callable[[Callable[..., T]], Callable[..., T]]:
