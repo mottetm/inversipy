@@ -56,8 +56,15 @@ class SyncSingletonStrategy(BindingStrategy):
         return self._instance
 
     async def get_async(self, factory: Callable[[], Any]) -> Any:
-        # Can reuse sync logic in async context
-        return self.get(factory)
+        # Handle both sync and async factories in async context
+        if not self._initialized:
+            result = factory()
+            if asyncio.iscoroutine(result):
+                self._instance = await result
+            else:
+                self._instance = result
+            self._initialized = True
+        return self._instance
 
     def reset(self) -> None:
         self._instance = None
@@ -99,8 +106,11 @@ class SyncTransientStrategy(BindingStrategy):
         return factory()
 
     async def get_async(self, factory: Callable[[], Any]) -> Any:
-        # Can call sync factory in async context
-        return factory()
+        # Handle both sync and async factories in async context
+        result = factory()
+        if asyncio.iscoroutine(result):
+            return await result
+        return result
 
     def reset(self) -> None:
         pass
@@ -139,8 +149,16 @@ class SyncRequestStrategy(BindingStrategy):
         return instance
 
     async def get_async(self, factory: Callable[[], Any]) -> Any:
-        # Can reuse sync logic - contextvars work in async contexts
-        return self.get(factory)
+        # Handle both sync and async factories - contextvars work in async contexts
+        instance = self._context_instances.get()
+        if instance is None:
+            result = factory()
+            if asyncio.iscoroutine(result):
+                instance = await result
+            else:
+                instance = result
+            self._context_instances.set(instance)
+        return instance
 
     def reset(self) -> None:
         self._context_instances.set(None)

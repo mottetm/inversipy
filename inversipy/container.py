@@ -248,7 +248,7 @@ class Container:
         Returns:
             Self for chaining
         """
-        return self.register(interface, instance=instance, scope=SingletonScope())
+        return self.register(interface, instance=instance, scope=Scopes.SINGLETON)
 
     def register_module(self, module: ModuleProtocol) -> "Container":
         """Register a module as a provider of dependencies.
