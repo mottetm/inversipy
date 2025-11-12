@@ -4,11 +4,6 @@ import asyncio
 import pytest
 from inversipy import (
     Container,
-    SINGLETON,
-    TRANSIENT,
-    REQUEST,
-    RequestScope,
-    AsyncSingletonScope,
     DependencyNotFoundError,
     CircularDependencyError,
     ResolutionError,
@@ -169,7 +164,7 @@ class TestScopes:
     def test_singleton_scope(self) -> None:
         """Test that singleton scope returns the same instance."""
         container = Container()
-        container.register(SimpleService, scope=SINGLETON)
+        container.register(SimpleService, scope=)
 
         service1 = container.get(SimpleService)
         service2 = container.get(SimpleService)
@@ -179,7 +174,7 @@ class TestScopes:
     def test_transient_scope(self) -> None:
         """Test that transient scope returns different instances."""
         container = Container()
-        container.register(SimpleService, scope=TRANSIENT)
+        container.register(SimpleService, scope=)
 
         service1 = container.get(SimpleService)
         service2 = container.get(SimpleService)
@@ -195,7 +190,7 @@ class TestScopes:
             call_count["count"] += 1
             return SimpleService()
 
-        container.register_factory(SimpleService, factory, scope=SINGLETON)
+        container.register_factory(SimpleService, factory, scope=)
 
         service1 = container.get(SimpleService)
         service2 = container.get(SimpleService)
@@ -212,7 +207,7 @@ class TestScopes:
             call_count["count"] += 1
             return SimpleService()
 
-        container.register_factory(SimpleService, factory, scope=TRANSIENT)
+        container.register_factory(SimpleService, factory, scope=)
 
         service1 = container.get(SimpleService)
         service2 = container.get(SimpleService)
@@ -292,9 +287,9 @@ class TestAsyncOperations:
 
     @pytest.mark.asyncio
     async def test_get_async_async_singleton_scope(self) -> None:
-        """Test async resolution with AsyncSingletonScope."""
+        """Test async resolution with."""
         container = Container()
-        scope = AsyncSingletonScope()
+        scope =()
         container.register(SimpleService, scope=scope)
 
         # First resolution
@@ -312,7 +307,7 @@ class TestAsyncOperations:
         async def async_factory() -> SimpleService:
             return SimpleService()
 
-        scope = AsyncSingletonScope()
+        scope =()
         container.register_factory(SimpleService, async_factory, scope=scope)
 
         service1 = await container.get_async(SimpleService)
@@ -368,7 +363,7 @@ class TestAsyncOperations:
     async def test_get_async_transient_scope(self) -> None:
         """Test async resolution with transient scope returns different instances."""
         container = Container()
-        container.register(SimpleService, scope=TRANSIENT)
+        container.register(SimpleService, scope=)
 
         service1 = await container.get_async(SimpleService)
         service2 = await container.get_async(SimpleService)
@@ -381,7 +376,7 @@ class TestAsyncOperations:
     async def test_get_async_singleton_scope(self) -> None:
         """Test async resolution with singleton scope returns same instance."""
         container = Container()
-        container.register(SimpleService, scope=SINGLETON)
+        container.register(SimpleService, scope=)
 
         service1 = await container.get_async(SimpleService)
         service2 = await container.get_async(SimpleService)
@@ -392,7 +387,7 @@ class TestAsyncOperations:
     @pytest.mark.asyncio
     async def test_get_async_request_scope(self) -> None:
         """Test async resolution with request scope isolates across tasks."""
-        scope = RequestScope()
+        scope =()
         container = Container()
         container.register(SimpleService, scope=scope)
 
@@ -413,7 +408,7 @@ class TestAsyncOperations:
     @pytest.mark.asyncio
     async def test_get_async_request_scope_same_task(self) -> None:
         """Test async resolution with request scope returns same instance within task."""
-        scope = RequestScope()
+        scope =()
         container = Container()
         container.register(SimpleService, scope=scope)
 
@@ -425,11 +420,11 @@ class TestAsyncOperations:
         assert service1 is service2  # Should be same instance within same task
 
     def test_sync_get_with_async_scope_raises(self) -> None:
-        """Test that synchronous get() raises when dependency uses AsyncSingletonScope."""
+        """Test that synchronous get() raises when dependency uses."""
         from inversipy import ResolutionError
 
         container = Container()
-        scope = AsyncSingletonScope()
+        scope =()
         container.register(SimpleService, scope=scope)
 
         with pytest.raises(ResolutionError, match="Cannot use synchronous get.*Use get_async"):
@@ -440,22 +435,22 @@ class TestAsyncOperations:
         """Test that get_async() works correctly with all synchronous scopes."""
         container = Container()
 
-        # Test with SINGLETON
-        container.register(SimpleService, scope=SINGLETON)
+        # Test with
+        container.register(SimpleService, scope=)
         service1 = await container.get_async(SimpleService)
         service2 = await container.get_async(SimpleService)
         assert service1 is service2
 
-        # Test with TRANSIENT
+        # Test with
         class AnotherService:
             pass
-        container.register(AnotherService, scope=TRANSIENT)
+        container.register(AnotherService, scope=)
         service3 = await container.get_async(AnotherService)
         service4 = await container.get_async(AnotherService)
         assert service3 is not service4
 
-        # Test with REQUEST
-        scope = RequestScope()
+        # Test with
+        scope =()
         class ThirdService:
             pass
         container.register(ThirdService, scope=scope)

@@ -4,14 +4,13 @@ import inspect
 from typing import Any, Callable, Optional, Type, get_type_hints
 
 from .container import Container
-from .scopes import SINGLETON, TRANSIENT
-from .types import Scope
+from .scopes import Scopes
 
 
 def injectable[T](
     container: Container,
     interface: Optional[Type[Any]] = None,
-    scope: Scope = TRANSIENT,
+    scope: Scopes = Scopes.TRANSIENT,
 ) -> Callable[[Type[T]], Type[T]]:
     """Decorator to mark a class as injectable and register it in a container.
 
@@ -25,7 +24,7 @@ def injectable[T](
 
     Example:
         ```python
-        @injectable(container, scope=SINGLETON)
+        @injectable(container, scope=Scopes.SINGLETON)
         class MyService:
             pass
         ```

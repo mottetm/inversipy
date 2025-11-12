@@ -19,19 +19,34 @@ from .exceptions import (
     ResolutionError,
     ValidationError,
 )
-from .scopes import TRANSIENT, SingletonScope, TransientScope, RequestScope
-from .types import DependencyKey, Factory, Scope, ModuleProtocol
+from .binding_strategies import (
+    BindingStrategy,
+    SyncSingletonStrategy,
+    AsyncSingletonStrategy,
+    SyncTransientStrategy,
+    AsyncTransientStrategy,
+    SyncRequestStrategy,
+    AsyncRequestStrategy,
+)
+from .scopes import Scopes
+from .types import DependencyKey, Factory, ModuleProtocol
 
 
 class Binding:
-    """Represents a binding between a type and its implementation."""
+    """Represents a binding between a type and its implementation.
+
+    Uses strategy pattern to handle different scope types and async/sync factories.
+    The appropriate strategy is automatically selected based on:
+    - The scope (SINGLETON, TRANSIENT, REQUEST)
+    - Whether the factory is async (inspected with inspect.iscoroutinefunction)
+    """
 
     def __init__(
         self,
         key: DependencyKey,
         factory: Optional[Factory[Any]] = None,
         implementation: Optional[Type[Any]] = None,
-        scope: Scope = TRANSIENT,
+        scope: Scopes = Scopes.TRANSIENT,
         instance: Optional[Any] = None,
     ) -> None:
         """Initialize a binding.
@@ -48,7 +63,6 @@ class Binding:
         self.implementation = implementation
         self.scope = scope
         self.instance = instance
-        self._async_scope_cache: Dict[Any, Any] = {}  # Cache for async resolution with non-async scopes
 
         # Validate that we have at least one way to create instances
         if factory is None and implementation is None and instance is None:
@@ -56,14 +70,42 @@ class Binding:
                 f"Must provide either factory, implementation, or instance for {key}"
             )
 
-    def create_instance(self, container: "Container") -> Any:
-        """Create an instance of the dependency.
+        # Determine if we have an async factory
+        self._is_async_factory = inspect.iscoroutinefunction(factory) if factory else False
+
+        # Select the appropriate strategy based on scope and async/sync
+        self._strategy = self._create_strategy(scope, self._is_async_factory)
+
+    def _create_strategy(self, scope: Scopes, is_async: bool) -> BindingStrategy:
+        """Create the appropriate binding strategy.
+
+        Args:
+            scope: The scope type
+            is_async: Whether the factory is async
+
+        Returns:
+            The binding strategy instance
+        """
+        if scope == Scopes.SINGLETON:
+            return AsyncSingletonStrategy() if is_async else SyncSingletonStrategy()
+        elif scope == Scopes.TRANSIENT:
+            return AsyncTransientStrategy() if is_async else SyncTransientStrategy()
+        elif scope == Scopes.REQUEST:
+            return AsyncRequestStrategy() if is_async else SyncRequestStrategy()
+        else:
+            raise RegistrationError(f"Unknown scope: {scope}")
+
+    def create_instance(self, container: "Container") -> Any:  # type: ignore
+        """Create an instance of the dependency (sync context).
 
         Args:
             container: Container to use for resolving dependencies
 
         Returns:
             Created instance
+
+        Raises:
+            ResolutionError: If trying to resolve async factory in sync context
         """
         # If we have a pre-created instance, return it
         if self.instance is not None:
@@ -78,11 +120,11 @@ class Binding:
         else:
             raise ResolutionError(f"Cannot create instance for {self.key}")
 
-        # Use the scope to manage instance lifecycle
-        return self.scope.get(factory_func)
+        # Use the strategy to manage instance lifecycle
+        return self._strategy.get(factory_func)
 
-    async def create_instance_async(self, container: "Container") -> Any:
-        """Create an instance of the dependency asynchronously.
+    async def create_instance_async(self, container: "Container") -> Any:  # type: ignore
+        """Create an instance of the dependency (async context).
 
         Args:
             container: Container to use for resolving dependencies
@@ -106,56 +148,12 @@ class Binding:
         else:
             raise ResolutionError(f"Cannot create instance for {self.key}")
 
-        # Use the scope to manage instance lifecycle
-        from .types import AsyncScope
-        from enum import Enum
+        # Use the strategy to manage instance lifecycle
+        return await self._strategy.get_async(factory_func)
 
-        # Get the actual scope instance (handle Scopes enum members)
-        actual_scope = self.scope.value if isinstance(self.scope, Enum) else self.scope
-
-        if isinstance(actual_scope, AsyncScope):
-            return await actual_scope.get_async(factory_func)
-        else:
-            # For non-async scopes with async resolution, handle caching manually
-            # because scopes cache coroutines instead of awaited results
-
-            # Determine cache key based on scope type
-            cache_key = None
-            if isinstance(actual_scope, SingletonScope):
-                cache_key = "singleton"
-            elif isinstance(actual_scope, RequestScope):
-                # For RequestScope, use asyncio task id as cache key
-                # Each async task gets its own context automatically
-                current_task = asyncio.current_task()
-                if current_task is not None:
-                    cache_key = f"request_{id(current_task)}"
-                else:
-                    cache_key = "request_main"
-            elif isinstance(actual_scope, TransientScope):
-                # No caching for transient
-                cache_key = None
-            else:
-                # For unknown scopes, use a fixed key (behave like singleton)
-                cache_key = "default"
-
-            # Check cache
-            if cache_key is not None and cache_key in self._async_scope_cache:
-                return self._async_scope_cache[cache_key]
-
-            # Create instance
-            result = factory_func()
-            if asyncio.iscoroutine(result):
-                instance = await result
-            else:
-                instance = result
-
-            # Store in cache if needed
-            if cache_key is not None:
-                self._async_scope_cache[cache_key] = instance
-
-            return instance
-
-
+    def reset(self) -> None:
+        """Reset the binding's scope state."""
+        self._strategy.reset()
 class Container:
     """Dependency injection container.
 
@@ -193,7 +191,7 @@ class Container:
         interface: Type[T],
         implementation: Optional[Type[T]] = None,
         factory: Optional[Factory[T]] = None,
-        scope: Scope = TRANSIENT,
+        scope: Scopes = Scopes.TRANSIENT,
         instance: Optional[T] = None,
     ) -> "Container":
         """Register a dependency in the container.
@@ -215,28 +213,18 @@ class Container:
         if implementation is None and factory is None and instance is None:
             implementation = interface
 
-        # Create a new scope instance to avoid sharing state between bindings
-        actual_scope = scope
-        if isinstance(scope, SingletonScope):
-            actual_scope = SingletonScope()
-        elif isinstance(scope, TransientScope):
-            actual_scope = TransientScope()
-        elif isinstance(scope, RequestScope):
-            # For RequestScope, we might want to share it, so keep the original
-            actual_scope = scope
-
         binding = Binding(
             key=interface,
             factory=factory,
             implementation=implementation,
-            scope=actual_scope,
+            scope=scope,
             instance=instance,
         )
         self._bindings[interface] = binding
         return self
 
     def register_factory[T](
-        self, interface: Type[T], factory: Factory[T], scope: Scope = TRANSIENT
+        self, interface: Type[T], factory: Factory[T], scope: Scopes = Scopes.TRANSIENT
     ) -> "Container":
         """Register a factory function for a dependency.
 

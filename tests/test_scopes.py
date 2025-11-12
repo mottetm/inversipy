@@ -5,8 +5,6 @@ import pytest
 from inversipy.scopes import (
     SingletonScope,
     TransientScope,
-    RequestScope,
-    AsyncSingletonScope,
 )
 
 
@@ -78,13 +76,13 @@ class TestTransientScope:
         assert Counter._instance_count == 2
 
 
-class TestRequestScope:
-    """Test RequestScope with contextvars automatic isolation."""
+class Test:
+    """Test with contextvars automatic isolation."""
 
     def test_returns_same_instance_in_same_context(self) -> None:
         """Test that request scope returns same instance within the same context."""
         Counter.reset_count()
-        scope = RequestScope()
+        scope =()
 
         # Within the same context (implicit), we get the same instance
         instance1 = scope.get(Counter)
@@ -96,7 +94,7 @@ class TestRequestScope:
     def test_reset_clears_current_context(self) -> None:
         """Test that reset clears instances in the current context."""
         Counter.reset_count()
-        scope = RequestScope()
+        scope =()
 
         instance1 = scope.get(Counter)
         scope.reset()
@@ -110,7 +108,7 @@ class TestRequestScope:
     async def test_async_task_isolation(self) -> None:
         """Test that different async tasks get isolated instances automatically."""
         Counter.reset_count()
-        scope = RequestScope()
+        scope =()
 
         async def task1() -> Counter:
             # Each async task runs in its own context
@@ -131,7 +129,7 @@ class TestRequestScope:
     async def test_same_instance_within_async_task(self) -> None:
         """Test that same async task gets same instance."""
         Counter.reset_count()
-        scope = RequestScope()
+        scope =()
 
         async def task() -> tuple[Counter, Counter]:
             # Within the same task, we should get the same instance
@@ -146,14 +144,14 @@ class TestRequestScope:
         assert Counter._instance_count == 1
 
 
-class TestAsyncSingletonScope:
-    """Test AsyncSingletonScope."""
+class Test:
+    """Test."""
 
     @pytest.mark.asyncio
     async def test_returns_same_instance(self) -> None:
         """Test that async singleton returns the same instance."""
         Counter.reset_count()
-        scope = AsyncSingletonScope()
+        scope =()
 
         instance1 = await scope.get_async(Counter)
         instance2 = await scope.get_async(Counter)
@@ -165,7 +163,7 @@ class TestAsyncSingletonScope:
     async def test_handles_async_factory(self) -> None:
         """Test that async singleton handles async factories."""
         Counter.reset_count()
-        scope = AsyncSingletonScope()
+        scope =()
 
         async def async_factory() -> Counter:
             return Counter()
@@ -180,7 +178,7 @@ class TestAsyncSingletonScope:
         """Test that synchronous get raises ResolutionError."""
         from inversipy import ResolutionError
 
-        scope = AsyncSingletonScope()
+        scope =()
 
         with pytest.raises(ResolutionError, match="Cannot use synchronous get"):
             scope.get(Counter)
@@ -189,7 +187,7 @@ class TestAsyncSingletonScope:
     async def test_reset_clears_instance(self) -> None:
         """Test that reset clears the cached instance."""
         Counter.reset_count()
-        scope = AsyncSingletonScope()
+        scope =()
 
         instance1 = await scope.get_async(Counter)
         scope.reset()

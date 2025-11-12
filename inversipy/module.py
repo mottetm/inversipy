@@ -4,8 +4,8 @@ from typing import Any, List, Optional, Set, Type
 
 from .container import Container
 from .exceptions import DependencyNotFoundError, RegistrationError
-from .scopes import TRANSIENT
-from .types import Factory, Scope
+from .scopes import Scopes
+from .types import Factory
 
 
 class Module(Container):
@@ -30,7 +30,7 @@ class Module(Container):
         interface: Type[T],
         implementation: Optional[Type[T]] = None,
         factory: Optional[Factory[T]] = None,
-        scope: Scope = TRANSIENT,
+        scope: Scopes = Scopes.TRANSIENT,
         instance: Optional[T] = None,
         public: bool = False,
     ) -> "Module":
@@ -69,7 +69,7 @@ class Module(Container):
         self,
         interface: Type[T],
         factory: Factory[T],
-        scope: Scope = TRANSIENT,
+        scope: Scopes = Scopes.TRANSIENT,
         public: bool = False,
     ) -> "Module":
         """Register a factory function for a dependency.
@@ -245,7 +245,7 @@ class ModuleBuilder:
         interface: Type[T],
         implementation: Optional[Type[T]] = None,
         factory: Optional[Factory[T]] = None,
-        scope: Scope = TRANSIENT,
+        scope: Scopes = Scopes.TRANSIENT,
         instance: Optional[T] = None,
     ) -> "ModuleBuilder":
         """Bind a dependency (private by default).
@@ -275,7 +275,7 @@ class ModuleBuilder:
         interface: Type[T],
         implementation: Optional[Type[T]] = None,
         factory: Optional[Factory[T]] = None,
-        scope: Scope = TRANSIENT,
+        scope: Scopes = Scopes.TRANSIENT,
         instance: Optional[T] = None,
     ) -> "ModuleBuilder":
         """Bind a public dependency.

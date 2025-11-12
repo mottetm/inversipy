@@ -11,19 +11,8 @@ Inversipy provides a flexible dependency injection container with support for:
 
 from .container import Container, Binding
 from .module import Module, ModuleBuilder
-from .scopes import (
-    Scopes,
-    SingletonScope,
-    TransientScope,
-    RequestScope,
-    AsyncSingletonScope,
-    AsyncTransientScope,
-    AsyncRequestScope,
-    SINGLETON,
-    TRANSIENT,
-    REQUEST,
-)
-from .types import Scope, AsyncScope, Factory, DependencyKey, ModuleProtocol
+from .scopes import Scopes
+from .types import Factory, DependencyKey, ModuleProtocol
 from .decorators import injectable, singleton, transient, inject, Inject
 from .exceptions import (
     InversipyError,
@@ -44,18 +33,7 @@ __all__ = [
     "Module",
     "ModuleBuilder",
     # Scopes
-    "Scopes",  # Primary interface - use Scopes.SINGLETON, Scopes.ASYNC_SINGLETON, etc.
-    "Scope",
-    "AsyncScope",
-    "SingletonScope",
-    "TransientScope",
-    "RequestScope",
-    "AsyncSingletonScope",
-    "AsyncTransientScope",
-    "AsyncRequestScope",
-    "SINGLETON",  # Deprecated: use Scopes.SINGLETON
-    "TRANSIENT",  # Deprecated: use Scopes.TRANSIENT
-    "REQUEST",    # Deprecated: use Scopes.REQUEST
+    "Scopes",
     # Types
     "Factory",
     "DependencyKey",
