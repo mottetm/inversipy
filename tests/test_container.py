@@ -217,6 +217,146 @@ class TestScopes:
         assert call_count["count"] == 2
 
 
+class TestFactoryDependencyInjection:
+    """Test automatic dependency injection for factory functions."""
+
+    def test_factory_with_single_dependency(self) -> None:
+        """Test factory function with one dependency injected."""
+        container = Container()
+        container.register(SimpleService, scope=Scopes.SINGLETON)
+
+        def create_dependent(simple: SimpleService) -> DependentService:
+            return DependentService(simple)
+
+        container.register_factory(DependentService, create_dependent)
+
+        service = container.get(DependentService)
+        assert isinstance(service, DependentService)
+        assert service.get_value() == "dependent:simple"
+
+    def test_factory_with_multiple_dependencies(self) -> None:
+        """Test factory function with multiple dependencies injected."""
+        container = Container()
+        container.register(SimpleService, scope=Scopes.SINGLETON)
+        container.register(DependentService)
+
+        def create_multi(
+            simple: SimpleService, dependent: DependentService
+        ) -> MultiDependentService:
+            return MultiDependentService(simple, dependent)
+
+        container.register_factory(MultiDependentService, create_multi)
+
+        service = container.get(MultiDependentService)
+        assert isinstance(service, MultiDependentService)
+        assert service.get_value() == "multi:simple:dependent:simple"
+
+    def test_factory_with_optional_parameter(self) -> None:
+        """Test factory with optional parameter with default value."""
+        container = Container()
+        container.register(SimpleService)
+
+        def create_with_optional(
+            simple: SimpleService, prefix: str = "custom"
+        ) -> DependentService:
+            # Just use the simple service, ignore prefix for this test
+            return DependentService(simple)
+
+        container.register_factory(DependentService, create_with_optional)
+
+        service = container.get(DependentService)
+        assert isinstance(service, DependentService)
+
+    def test_factory_with_missing_dependency_raises_error(self) -> None:
+        """Test that factory with unresolved dependency raises error."""
+        container = Container()
+        # Don't register SimpleService
+
+        def create_dependent(simple: SimpleService) -> DependentService:
+            return DependentService(simple)
+
+        container.register_factory(DependentService, create_dependent)
+
+        with pytest.raises(ResolutionError) as exc_info:
+            container.get(DependentService)
+
+        assert "Cannot resolve factory parameter 'simple'" in str(exc_info.value)
+
+    def test_factory_without_type_hint_raises_error(self) -> None:
+        """Test that factory parameter without type hint raises error."""
+        container = Container()
+
+        def create_bad(param) -> SimpleService:  # No type hint
+            return SimpleService()
+
+        container.register_factory(SimpleService, create_bad)
+
+        with pytest.raises(ResolutionError) as exc_info:
+            container.get(SimpleService)
+
+        assert "has no type hint" in str(exc_info.value)
+
+    def test_factory_dependency_injection_with_singleton_scope(self) -> None:
+        """Test factory with dependency injection using singleton scope."""
+        container = Container()
+        container.register(SimpleService, scope=Scopes.SINGLETON)
+
+        call_count = {"count": 0}
+
+        def create_dependent(simple: SimpleService) -> DependentService:
+            call_count["count"] += 1
+            return DependentService(simple)
+
+        container.register_factory(
+            DependentService, create_dependent, scope=Scopes.SINGLETON
+        )
+
+        service1 = container.get(DependentService)
+        service2 = container.get(DependentService)
+
+        assert service1 is service2
+        assert call_count["count"] == 1
+
+    def test_factory_dependency_injection_with_transient_scope(self) -> None:
+        """Test factory with dependency injection using transient scope."""
+        container = Container()
+        container.register(SimpleService, scope=Scopes.SINGLETON)
+
+        call_count = {"count": 0}
+
+        def create_dependent(simple: SimpleService) -> DependentService:
+            call_count["count"] += 1
+            return DependentService(simple)
+
+        container.register_factory(
+            DependentService, create_dependent, scope=Scopes.TRANSIENT
+        )
+
+        service1 = container.get(DependentService)
+        service2 = container.get(DependentService)
+
+        assert service1 is not service2
+        assert call_count["count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_async_factory_with_dependency_injection(self) -> None:
+        """Test async factory function with dependency injection."""
+        container = Container()
+        container.register(SimpleService, scope=Scopes.SINGLETON)
+
+        async def create_dependent_async(simple: SimpleService) -> DependentService:
+            await asyncio.sleep(0.01)  # Simulate async work
+            return DependentService(simple)
+
+        container.register_factory(
+            DependentService, create_dependent_async, scope=Scopes.SINGLETON
+        )
+
+        service = await container.get_async(DependentService)
+        assert isinstance(service, DependentService)
+        assert service.get_value() == "dependent:simple"
+
+
 class TestChildContainers:
     """Test parent-child container hierarchy."""
 
