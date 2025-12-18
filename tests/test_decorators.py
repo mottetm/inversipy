@@ -188,3 +188,41 @@ class TestInjectDescriptor:
 
         with pytest.raises(AttributeError):
             _ = obj.service
+
+    def test_inject_descriptor_accessed_on_class(self) -> None:
+        """Test that Inject descriptor returns self when accessed on class."""
+
+        class MyClass:
+            service = Inject(SimpleService)
+
+        # Accessing descriptor on class (not instance) should return descriptor
+        descriptor = MyClass.service
+        assert isinstance(descriptor, Inject)
+
+    def test_inject_decorator_with_exception_in_type_hints(self) -> None:
+        """Test inject decorator handles exceptions when getting type hints."""
+        container = Container()
+        container.register(SimpleService)
+
+        # Create a function that will cause issues with get_type_hints
+        # This can happen with complex forward references or import issues
+        def problematic_function(service=None):  # No type hint but has default
+            return "called"
+
+        decorated = inject(container)(problematic_function)
+        result = decorated()
+        assert result == "called"
+
+    def test_inject_decorator_with_resolution_failure(self) -> None:
+        """Test inject decorator handles dependency resolution failures gracefully."""
+        container = Container()
+        # Don't register SimpleService
+
+        @inject(container)
+        def my_function(service: SimpleService) -> str:
+            return service.get_value()
+
+        # Should not raise during decoration, only during call
+        # And since SimpleService is required but not registered, function gets called without it
+        with pytest.raises(TypeError):  # Missing required positional argument
+            my_function()

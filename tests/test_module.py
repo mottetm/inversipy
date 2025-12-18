@@ -173,6 +173,31 @@ class TestModuleLoading:
         service2 = container.get(PrivateService)
         assert isinstance(service2, PrivateService)
 
+    def test_module_composition_is_public_check(self) -> None:
+        """Test that parent module checks is_public on registered child modules."""
+        # Create child module with public dependency
+        child_module = Module("ChildModule")
+        child_module.register(PublicService, public=True)
+        child_module.register(PrivateService, public=False)
+
+        # Create parent module that registers child module
+        parent_module = Module("ParentModule")
+        parent_module.register_module(child_module)
+
+        # Parent module should report child's public deps as public
+        assert parent_module.is_public(PublicService)
+        # But not child's private deps
+        assert not parent_module.is_public(PrivateService)
+
+        # Register parent in container
+        container = Container()
+        container.register_module(parent_module)
+
+        # Container should be able to resolve public dep from child via parent
+        assert container.has(PublicService)
+        service = container.get(PublicService)
+        assert isinstance(service, PublicService)
+
 
 class TestModuleBuilder:
     """Test ModuleBuilder."""
