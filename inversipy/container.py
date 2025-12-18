@@ -571,16 +571,29 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
-                    # Try to resolve from container
-                    try:
-                        kwargs[param_name] = self.get(param_type)
-                    except DependencyNotFoundError:
-                        # Check if parameter has a default value
-                        if param.default is inspect.Parameter.empty:
-                            raise ResolutionError(
-                                f"Cannot resolve parameter '{param_name}' of type "
-                                f"'{param_type}' for class '{cls.__name__}'"
-                            )
+                    # Special case: auto-inject Container itself
+                    # Check if the type is Container (handle forward references and imports)
+                    is_container_type = (
+                        param_type is Container
+                        or (isinstance(param_type, type) and issubclass(param_type, Container))
+                        or str(param_type) == "<class 'inversipy.container.Container'>"
+                        or (hasattr(param_type, '__name__') and param_type.__name__ == 'Container')
+                    )
+
+                    if is_container_type:
+                        # Auto-inject the container itself
+                        kwargs[param_name] = self
+                    else:
+                        # Try to resolve from container
+                        try:
+                            kwargs[param_name] = self.get(param_type)
+                        except DependencyNotFoundError:
+                            # Check if parameter has a default value
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve parameter '{param_name}' of type "
+                                    f"'{param_type}' for class '{cls.__name__}'"
+                                )
                 elif param.default is inspect.Parameter.empty:
                     raise ResolutionError(
                         f"Parameter '{param_name}' of class '{cls.__name__}' "
@@ -638,16 +651,29 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
-                    # Try to resolve from container asynchronously
-                    try:
-                        kwargs[param_name] = await self.get_async(param_type)
-                    except DependencyNotFoundError:
-                        # Check if parameter has a default value
-                        if param.default is inspect.Parameter.empty:
-                            raise ResolutionError(
-                                f"Cannot resolve parameter '{param_name}' of type "
-                                f"'{param_type}' for class '{cls.__name__}'"
-                            )
+                    # Special case: auto-inject Container itself
+                    # Check if the type is Container (handle forward references and imports)
+                    is_container_type = (
+                        param_type is Container
+                        or (isinstance(param_type, type) and issubclass(param_type, Container))
+                        or str(param_type) == "<class 'inversipy.container.Container'>"
+                        or (hasattr(param_type, '__name__') and param_type.__name__ == 'Container')
+                    )
+
+                    if is_container_type:
+                        # Auto-inject the container itself
+                        kwargs[param_name] = self
+                    else:
+                        # Try to resolve from container asynchronously
+                        try:
+                            kwargs[param_name] = await self.get_async(param_type)
+                        except DependencyNotFoundError:
+                            # Check if parameter has a default value
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve parameter '{param_name}' of type "
+                                    f"'{param_type}' for class '{cls.__name__}'"
+                                )
                 elif param.default is inspect.Parameter.empty:
                     raise ResolutionError(
                         f"Parameter '{param_name}' of class '{cls.__name__}' "

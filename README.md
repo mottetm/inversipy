@@ -335,26 +335,35 @@ def handle_request(handler: RequestHandler) -> dict:
 result = handle_request()  # Dependencies automatically injected
 ```
 
-Property injection using descriptors:
+Property injection using `Injectable` base class:
 
 ```python
-from inversipy import Container, Inject
+from typing import Annotated
+from inversipy import Container, Injectable, Inject
 
 container = Container()
 container.register(Database)
+container.register(Logger)
 
-class UserService:
-    database = Inject(Database)
-
-    def __init__(self, container: Container) -> None:
-        self._container = container
+class UserService(Injectable):
+    database: Annotated[Database, Inject]
+    logger: Annotated[Logger, Inject]
 
     def get_users(self) -> list:
+        self.logger.info("Fetching users")
         return self.database.query("SELECT * FROM users")
 
-service = UserService(container)
+container.register(UserService)
+service = container.get(UserService)  # Container auto-injected!
 users = service.get_users()
 ```
+
+The `Injectable` base class automatically:
+- Scans for `Annotated[Type, Inject]` properties
+- Generates a constructor that accepts `container: Container`
+- Sets up dependency injection for all marked properties
+
+No need to manually store `_container` or call `super().__init__()`!
 
 ## Advanced Usage
 

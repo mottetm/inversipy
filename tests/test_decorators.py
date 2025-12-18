@@ -1,7 +1,8 @@
 """Tests for decorators."""
 
 import pytest
-from inversipy import Container, Scopes, injectable, singleton, transient, inject, Inject
+from typing import Annotated
+from inversipy import Container, Scopes, injectable, singleton, transient, inject, Inject, Injectable
 
 
 class SimpleService:
@@ -226,3 +227,109 @@ class TestInjectDescriptor:
         # And since SimpleService is required but not registered, function gets called without it
         with pytest.raises(TypeError):  # Missing required positional argument
             my_function()
+
+
+class TestInjectable:
+    """Test Injectable base class with Annotated[Type, Inject] pattern."""
+
+    def test_injectable_with_single_dependency(self) -> None:
+        """Test Injectable with single dependency."""
+        container = Container()
+        container.register(SimpleService)
+
+        class UserService(Injectable):
+            simple: Annotated[SimpleService, Inject]
+
+            def get_value(self) -> str:
+                return f"user:{self.simple.get_value()}"
+
+        container.register(UserService)
+        service = container.get(UserService)
+
+        assert isinstance(service, UserService)
+        assert service.get_value() == "user:simple"
+        assert isinstance(service.simple, SimpleService)
+
+    def test_injectable_with_multiple_dependencies(self) -> None:
+        """Test Injectable with multiple dependencies."""
+        container = Container()
+        container.register(SimpleService)
+        container.register(DependentService)
+
+        class ComplexService(Injectable):
+            simple: Annotated[SimpleService, Inject]
+            dependent: Annotated[DependentService, Inject]
+
+            def get_combined(self) -> str:
+                return f"{self.simple.get_value()}+{self.dependent.get_value()}"
+
+        container.register(ComplexService)
+        service = container.get(ComplexService)
+
+        assert service.get_combined() == "simple+dependent:simple"
+
+    def test_injectable_container_auto_injected(self) -> None:
+        """Test that Container is automatically injected."""
+        container = Container()
+        container.register(SimpleService)
+
+        class ServiceWithContainer(Injectable):
+            simple: Annotated[SimpleService, Inject]
+
+            def has_container(self) -> bool:
+                return hasattr(self, '_container') and self._container is not None
+
+        container.register(ServiceWithContainer)
+        service = container.get(ServiceWithContainer)
+
+        assert service.has_container()
+        assert service._container is container
+
+    def test_injectable_without_annotations_works(self) -> None:
+        """Test Injectable without any Inject annotations."""
+        container = Container()
+
+        class PlainService(Injectable):
+            def get_value(self) -> str:
+                return "plain"
+
+        # Should still work, just no injected dependencies
+        container.register(PlainService)
+        service = container.get(PlainService)
+        assert service.get_value() == "plain"
+
+    def test_container_parameter_injection(self) -> None:
+        """Test that Container can be injected as a regular parameter."""
+        container = Container()
+        container.register(SimpleService)
+
+        class ServiceNeedingContainer:
+            def __init__(self, simple: SimpleService, container: Container):
+                self.simple = simple
+                self.container = container
+
+        container.register(ServiceNeedingContainer)
+        service = container.get(ServiceNeedingContainer)
+
+        assert isinstance(service.simple, SimpleService)
+        assert service.container is container
+
+    def test_injectable_with_custom_init(self) -> None:
+        """Test Injectable with custom __init__ method."""
+        container = Container()
+        container.register(SimpleService)
+
+        class ServiceWithInit(Injectable):
+            simple: Annotated[SimpleService, Inject]
+
+            def __init__(self):
+                self.custom_value = "initialized"
+
+            def get_value(self) -> str:
+                return f"{self.custom_value}:{self.simple.get_value()}"
+
+        container.register(ServiceWithInit)
+        service = container.get(ServiceWithInit)
+
+        assert service.get_value() == "initialized:simple"
+        assert service.custom_value == "initialized"

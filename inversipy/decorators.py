@@ -1,7 +1,7 @@
 """Decorators for dependency injection."""
 
 import inspect
-from typing import Any, Callable, Optional, Type, get_type_hints
+from typing import Any, Callable, Optional, Type, get_type_hints, get_args, get_origin, Annotated
 
 from .container import Container
 from .scopes import Scopes
@@ -192,3 +192,95 @@ class Inject[T]:
             setattr(obj, self.attr_name, value)
 
         return getattr(obj, self.attr_name)
+
+
+class Injectable:
+    """Base class for services using property-based dependency injection.
+
+    Services that inherit from Injectable can use Annotated[Type, Inject()] to declare
+    dependencies as class attributes. The Injectable base class automatically generates
+    a constructor that accepts a Container and sets up all injected properties.
+
+    Example:
+        ```python
+        class UserService(Injectable):
+            database: Annotated[Database, Inject]
+            logger: Annotated[Logger, Inject]
+
+            def get_users(self):
+                return self.database.query("SELECT * FROM users")
+
+        container.register(Database)
+        container.register(Logger)
+        container.register(UserService)
+
+        service = container.get(UserService)  # Container auto-injected
+        ```
+    """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Called when a class inherits from Injectable.
+
+        Scans for Annotated[Type, Inject()] attributes and generates __init__.
+        """
+        super().__init_subclass__(**kwargs)
+
+        # Scan class annotations for Inject() markers
+        inject_fields: dict[str, Type[Any]] = {}
+
+        # Get annotations from the class (not inherited)
+        annotations = getattr(cls, '__annotations__', {})
+
+        for attr_name, annotation in annotations.items():
+            # Check if this is Annotated[Type, Inject()]
+            origin = get_origin(annotation)
+            if origin is Annotated:
+                args = get_args(annotation)
+                if len(args) >= 2:
+                    # First arg is the actual type, rest are metadata
+                    actual_type = args[0]
+                    metadata = args[1:]
+
+                    # Check if Inject() is in metadata
+                    for meta in metadata:
+                        if isinstance(meta, Inject) or meta is Inject or (
+                            inspect.isclass(meta) and issubclass(meta, Inject)
+                        ):
+                            inject_fields[attr_name] = actual_type
+                            # Create the descriptor instance
+                            descriptor = Inject(actual_type)
+                            setattr(cls, attr_name, descriptor)
+                            break
+
+        # Store inject fields metadata on the class
+        cls._inject_fields = inject_fields
+
+        # Generate __init__ method
+        if inject_fields:
+            # Check if class already has custom __init__
+            has_custom_init = '__init__' in cls.__dict__
+            original_init = cls.__init__ if has_custom_init else None
+
+            def __init__(self: Any, container: "Container") -> None:
+                """Auto-generated __init__ that accepts container."""
+                # Set the container
+                self._container = container
+
+                # Call original __init__ if it exists and is not object.__init__
+                if original_init is not None and original_init is not object.__init__:
+                    # Get signature of original init
+                    sig = inspect.signature(original_init)
+                    params = list(sig.parameters.keys())
+
+                    # Remove 'self' from params
+                    if 'self' in params:
+                        params.remove('self')
+
+                    # If original init has no other params besides self, just call it
+                    if not params:
+                        original_init(self)
+                    # Otherwise, assume it also takes container (backward compat)
+                    elif 'container' in params:
+                        original_init(self, container=container)
+
+            cls.__init__ = __init__

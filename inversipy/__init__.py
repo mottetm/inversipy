@@ -13,7 +13,7 @@ from .container import Container, Binding
 from .module import Module, ModuleBuilder
 from .scopes import Scopes
 from .types import Factory, DependencyKey, ModuleProtocol
-from .decorators import injectable, singleton, transient, inject, Inject
+from .decorators import injectable, singleton, transient, inject, Inject, Injectable
 from .exceptions import (
     InversipyError,
     DependencyNotFoundError,
@@ -44,6 +44,7 @@ __all__ = [
     "transient",
     "inject",
     "Inject",
+    "Injectable",
     # Exceptions
     "InversipyError",
     "DependencyNotFoundError",
