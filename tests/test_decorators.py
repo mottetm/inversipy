@@ -298,22 +298,6 @@ class TestInjectable:
         service = container.get(PlainService)
         assert service.get_value() == "plain"
 
-    def test_container_parameter_injection(self) -> None:
-        """Test that Container can be injected as a regular parameter."""
-        container = Container()
-        container.register(SimpleService)
-
-        class ServiceNeedingContainer:
-            def __init__(self, simple: SimpleService, container: Container):
-                self.simple = simple
-                self.container = container
-
-        container.register(ServiceNeedingContainer)
-        service = container.get(ServiceNeedingContainer)
-
-        assert isinstance(service.simple, SimpleService)
-        assert service.container is container
-
     def test_injectable_with_custom_init(self) -> None:
         """Test Injectable with custom __init__ method."""
         container = Container()

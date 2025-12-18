@@ -554,6 +554,12 @@ class Container:
             # Remove 'return' from type hints
             type_hints.pop("return", None)
 
+            # Check if this is an Injectable class that needs the container
+            # Injectable classes have a special _inject_fields attribute and __init__ that expects container
+            if hasattr(cls, '_inject_fields') and cls._inject_fields:
+                # This is an Injectable class - pass container explicitly
+                return cls(container=self)
+
             # Get constructor signature
             sig = inspect.signature(init_method)
 
@@ -571,36 +577,23 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
-                    # Special case: auto-inject Container itself
-                    # Check if the type is Container (handle forward references and imports)
-                    is_container_type = (
-                        param_type is Container
-                        or (isinstance(param_type, type) and issubclass(param_type, Container))
-                        or str(param_type) == "<class 'inversipy.container.Container'>"
-                        or (hasattr(param_type, '__name__') and param_type.__name__ == 'Container')
-                    )
-
-                    if is_container_type:
-                        # Auto-inject the container itself
-                        kwargs[param_name] = self
-                    else:
-                        # Try to resolve from container
-                        try:
-                            kwargs[param_name] = self.get(param_type)
-                        except DependencyNotFoundError:
-                            # Check if parameter has a default value
-                            if param.default is inspect.Parameter.empty:
-                                raise ResolutionError(
-                                    f"Cannot resolve parameter '{param_name}' of type "
-                                    f"'{param_type}' for class '{cls.__name__}'"
-                                )
+                    # Try to resolve from container
+                    try:
+                        kwargs[param_name] = self.get(param_type)
+                    except DependencyNotFoundError:
+                        # Check if parameter has a default value
+                        if param.default is inspect.Parameter.empty:
+                            raise ResolutionError(
+                                f"Cannot resolve parameter '{param_name}' of type "
+                                f"'{param_type}' for class '{cls.__name__}'"
+                            )
                 elif param.default is inspect.Parameter.empty:
                     raise ResolutionError(
                         f"Parameter '{param_name}' of class '{cls.__name__}' "
                         f"has no type annotation and no default value"
                     )
 
-            # Create the instance
+            # Create the instance with resolved dependencies
             return cls(**kwargs)
 
         except Exception as e:
@@ -634,6 +627,12 @@ class Container:
             # Remove 'return' from type hints
             type_hints.pop("return", None)
 
+            # Check if this is an Injectable class that needs the container
+            # Injectable classes have a special _inject_fields attribute and __init__ that expects container
+            if hasattr(cls, '_inject_fields') and cls._inject_fields:
+                # This is an Injectable class - pass container explicitly
+                return cls(container=self)
+
             # Get constructor signature
             sig = inspect.signature(init_method)
 
@@ -651,36 +650,23 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
-                    # Special case: auto-inject Container itself
-                    # Check if the type is Container (handle forward references and imports)
-                    is_container_type = (
-                        param_type is Container
-                        or (isinstance(param_type, type) and issubclass(param_type, Container))
-                        or str(param_type) == "<class 'inversipy.container.Container'>"
-                        or (hasattr(param_type, '__name__') and param_type.__name__ == 'Container')
-                    )
-
-                    if is_container_type:
-                        # Auto-inject the container itself
-                        kwargs[param_name] = self
-                    else:
-                        # Try to resolve from container asynchronously
-                        try:
-                            kwargs[param_name] = await self.get_async(param_type)
-                        except DependencyNotFoundError:
-                            # Check if parameter has a default value
-                            if param.default is inspect.Parameter.empty:
-                                raise ResolutionError(
-                                    f"Cannot resolve parameter '{param_name}' of type "
-                                    f"'{param_type}' for class '{cls.__name__}'"
-                                )
+                    # Try to resolve from container asynchronously
+                    try:
+                        kwargs[param_name] = await self.get_async(param_type)
+                    except DependencyNotFoundError:
+                        # Check if parameter has a default value
+                        if param.default is inspect.Parameter.empty:
+                            raise ResolutionError(
+                                f"Cannot resolve parameter '{param_name}' of type "
+                                f"'{param_type}' for class '{cls.__name__}'"
+                            )
                 elif param.default is inspect.Parameter.empty:
                     raise ResolutionError(
                         f"Parameter '{param_name}' of class '{cls.__name__}' "
                         f"has no type annotation and no default value"
                     )
 
-            # Create the instance
+            # Create the instance with resolved dependencies
             return cls(**kwargs)
 
         except Exception as e:
