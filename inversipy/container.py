@@ -4,6 +4,7 @@ import asyncio
 import inspect
 from typing import (
     Any,
+    Callable,
     Dict,
     List,
     Optional,
@@ -73,6 +74,12 @@ class Binding:
         # Determine if we have an async factory
         self._is_async_factory = inspect.iscoroutinefunction(factory) if factory else False
 
+        # Check if factory has parameters that need resolution
+        self._factory_has_params = False
+        if factory is not None:
+            sig = inspect.signature(factory)
+            self._factory_has_params = len(sig.parameters) > 0
+
         # Select the appropriate strategy based on scope and async/sync
         self._strategy = self._create_strategy(scope, self._is_async_factory)
 
@@ -113,7 +120,12 @@ class Binding:
 
         # Build the factory function
         if self.factory is not None:
-            factory_func = self.factory
+            if self._factory_has_params:
+                # Factory has parameters - resolve them from container
+                factory_func = lambda: self._call_factory_with_deps(container, self.factory)  # type: ignore
+            else:
+                # Factory has no parameters - call directly
+                factory_func = self.factory
         elif self.implementation is not None:
             # Create a factory from the implementation type
             factory_func = lambda: container._create_instance(self.implementation)  # type: ignore
@@ -122,6 +134,48 @@ class Binding:
 
         # Use the strategy to manage instance lifecycle
         return self._strategy.get(factory_func)
+
+    def _call_factory_with_deps(self, container: "Container", factory: Callable[..., Any]) -> Any:  # type: ignore
+        """Call a factory function, resolving its dependencies from the container.
+
+        Args:
+            container: Container to resolve dependencies from
+            factory: Factory function to call
+
+        Returns:
+            Result of calling the factory
+
+        Raises:
+            ResolutionError: If dependencies cannot be resolved
+        """
+        try:
+            sig = inspect.signature(factory)
+            type_hints = get_type_hints(factory)
+
+            kwargs: Dict[str, Any] = {}
+            for param_name, param in sig.parameters.items():
+                if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                    continue
+
+                param_type = type_hints.get(param_name)
+                if param_type is not None:
+                    try:
+                        kwargs[param_name] = container.get(param_type)
+                    except DependencyNotFoundError:
+                        if param.default is inspect.Parameter.empty:
+                            raise ResolutionError(
+                                f"Cannot resolve factory parameter '{param_name}' of type {param_type} for {self.key}"
+                            )
+                elif param.default is inspect.Parameter.empty:
+                    raise ResolutionError(
+                        f"Factory parameter '{param_name}' has no type hint and no default value for {self.key}"
+                    )
+
+            return factory(**kwargs)
+        except Exception as e:
+            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
+                raise
+            raise ResolutionError(f"Failed to call factory for {self.key}: {e}")
 
     async def create_instance_async(self, container: "Container") -> Any:  # type: ignore
         """Create an instance of the dependency (async context).
@@ -138,18 +192,69 @@ class Binding:
 
         # Build the factory function
         if self.factory is not None:
-            factory_func = self.factory
+            if self._factory_has_params:
+                # Factory has parameters - resolve them from container
+                async def factory_func():  # type: ignore
+                    return await self._call_factory_with_deps_async(container, self.factory)  # type: ignore
+            else:
+                # Factory has no parameters - call directly
+                factory_func = self.factory
         elif self.implementation is not None:
             # Create a factory from the implementation type
             # For async, we need to call _create_instance_async
-            async def async_impl_factory():  # type: ignore
+            async def factory_func():  # type: ignore
                 return await container._create_instance_async(self.implementation)  # type: ignore
-            factory_func = async_impl_factory
         else:
             raise ResolutionError(f"Cannot create instance for {self.key}")
 
         # Use the strategy to manage instance lifecycle
         return await self._strategy.get_async(factory_func)
+
+    async def _call_factory_with_deps_async(self, container: "Container", factory: Callable[..., Any]) -> Any:  # type: ignore
+        """Call a factory function asynchronously, resolving its dependencies from the container.
+
+        Args:
+            container: Container to resolve dependencies from
+            factory: Factory function to call
+
+        Returns:
+            Result of calling the factory
+
+        Raises:
+            ResolutionError: If dependencies cannot be resolved
+        """
+        try:
+            sig = inspect.signature(factory)
+            type_hints = get_type_hints(factory)
+
+            kwargs: Dict[str, Any] = {}
+            for param_name, param in sig.parameters.items():
+                if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                    continue
+
+                param_type = type_hints.get(param_name)
+                if param_type is not None:
+                    try:
+                        kwargs[param_name] = await container.get_async(param_type)
+                    except DependencyNotFoundError:
+                        if param.default is inspect.Parameter.empty:
+                            raise ResolutionError(
+                                f"Cannot resolve factory parameter '{param_name}' of type {param_type} for {self.key}"
+                            )
+                elif param.default is inspect.Parameter.empty:
+                    raise ResolutionError(
+                        f"Factory parameter '{param_name}' has no type hint and no default value for {self.key}"
+                    )
+
+            result = factory(**kwargs)
+            # If factory is async, await the result
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
+        except Exception as e:
+            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
+                raise
+            raise ResolutionError(f"Failed to call factory for {self.key}: {e}")
 
     def reset(self) -> None:
         """Reset the binding's scope state."""

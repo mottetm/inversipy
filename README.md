@@ -28,7 +28,7 @@ pip install inversipy[dev]
 ## Quick Start
 
 ```python
-from inversipy import Container, SINGLETON
+from inversipy import Container, Scopes
 
 # Define your services
 class Database:
@@ -79,7 +79,7 @@ This design eliminates code duplication while providing proper specialization - 
 The `Container` is the main component that manages dependency registration and resolution.
 
 ```python
-from inversipy import Container, SINGLETON, TRANSIENT
+from inversipy import Container, Scopes, TRANSIENT
 
 container = Container()
 
@@ -116,7 +116,7 @@ Scopes control the lifecycle of dependencies.
 Creates one instance and reuses it for all requests:
 
 ```python
-from inversipy import Container, SINGLETON
+from inversipy import Container, Scopes
 
 container = Container()
 container.register(Database, scope=SINGLETON)
@@ -131,7 +131,7 @@ assert db1 is db2  # Same instance
 Creates a new instance for each request:
 
 ```python
-from inversipy import Container, TRANSIENT
+from inversipy import Container, Scopes
 
 container = Container()
 container.register(RequestHandler, scope=TRANSIENT)
@@ -146,7 +146,7 @@ assert handler1 is not handler2  # Different instances
 Creates one instance per request/context using Python's `contextvars` module. **Automatically isolates instances per async task or thread** - no manual context management needed:
 
 ```python
-from inversipy import Container, REQUEST
+from inversipy import Container, Scopes
 
 container = Container()
 container.register(RequestService, scope=REQUEST)
@@ -186,23 +186,23 @@ async def get_service():
 
 ### Modules
 
-Modules allow you to organize dependencies with public/private access control. Modules are registered as **live providers** - they remain the source of truth for their dependencies.
+Modules allow you to organize dependencies with public/private access control. **Dependencies are private by default** - you must explicitly mark them as public. Modules are registered as **live providers** - they remain the source of truth for their dependencies.
 
 ```python
-from inversipy import Module, Container, SINGLETON
+from inversipy import Module, Container, Scopes
 
 # Create a database module
 db_module = Module("Database")
 
-# Register private dependencies
-db_module.register(DatabaseConnection, scope=SINGLETON, public=False)
-db_module.register(QueryBuilder, public=False)
+# Register private dependencies (public=False is the default)
+db_module.register(DatabaseConnection, scope=Scopes.SINGLETON)  # Private by default
+db_module.register(QueryBuilder)  # Private by default
 
-# Register public dependencies
-db_module.register(Database, scope=SINGLETON, public=True)
+# Register public dependencies (must explicitly set public=True)
+db_module.register(Database, scope=Scopes.SINGLETON, public=True)
 db_module.register(UserRepository, public=True)
 
-# Or use export to make dependencies public
+# Or use export to make dependencies public after registration
 db_module.export(Database, UserRepository)
 
 # Register module as a provider in the container
@@ -210,9 +210,9 @@ container = Container()
 container.register_module(db_module)
 
 # Only public dependencies are accessible
-database = container.get(Database)  # ✓ Works
-user_repo = container.get(UserRepository)  # ✓ Works
-# connection = container.get(DatabaseConnection)  # ✗ Not accessible (private)
+database = container.get(Database)  # ✓ Works - public
+user_repo = container.get(UserRepository)  # ✓ Works - public
+# connection = container.get(DatabaseConnection)  # ✗ DependencyNotFoundError - private
 
 # Module remains live - add new dependencies dynamically
 db_module.register(CacheService, public=True)
@@ -266,7 +266,7 @@ module = (
 Create container hierarchies where children can access parent dependencies:
 
 ```python
-from inversipy import Container, SINGLETON
+from inversipy import Container, Scopes
 
 # Parent container with shared services
 parent = Container(name="Parent")
@@ -360,19 +360,34 @@ users = service.get_users()
 
 ### Factory Functions with Dependencies
 
+Factory functions can have dependencies that are automatically resolved from the container. Simply type-hint the parameters, and the container will inject them:
+
 ```python
-from inversipy import Container
+from inversipy import Container, Scopes
 
 container = Container()
-container.register(Config)
+container.register(Config, scope=Scopes.SINGLETON)
 
 def create_database(config: Config) -> Database:
+    """Factory function with dependency - config is automatically injected!"""
     return Database(config.db_url)
 
-container.register_factory(
-    Database,
-    lambda: create_database(container.get(Config))
-)
+# The container automatically resolves the Config dependency
+container.register_factory(Database, create_database, scope=Scopes.SINGLETON)
+
+# Config is injected automatically when creating Database
+db = container.get(Database)
+```
+
+Works with multiple dependencies too:
+
+```python
+def create_user_service(db: Database, logger: Logger, cache: Cache) -> UserService:
+    """All three dependencies are automatically resolved and injected"""
+    return UserService(db, logger, cache)
+
+container.register_factory(UserService, create_user_service)
+service = container.get(UserService)  # db, logger, and cache auto-injected
 ```
 
 ### Conditional Registration
@@ -411,7 +426,7 @@ def handle_request(request):
 RequestScope uses `contextvars` for automatic context isolation. **No explicit context management needed** - each request/thread/async task is automatically isolated:
 
 ```python
-from inversipy import Container, REQUEST
+from inversipy import Container, Scopes
 from fastapi import FastAPI
 
 app = FastAPI()
