@@ -554,14 +554,23 @@ class Container:
             # Remove 'return' from type hints
             type_hints.pop("return", None)
 
-            # Check if this is an Injectable class that needs the container
-            # Injectable classes have a special _inject_fields attribute and __init__ that expects container
-            if hasattr(cls, '_inject_fields') and cls._inject_fields:
-                # This is an Injectable class - pass container explicitly
-                return cls(container=self)
-
             # Get constructor signature
             sig = inspect.signature(init_method)
+
+            # Check if this is an Injectable class by looking for container: Container parameter
+            # Injectable classes have __init__(self, container: Container)
+            if 'container' in sig.parameters and 'container' in type_hints:
+                container_type = type_hints['container']
+                # Check if it's the Container type
+                is_container_type = (
+                    container_type is Container
+                    or (isinstance(container_type, type) and issubclass(container_type, Container))
+                    or str(container_type) == "<class 'inversipy.container.Container'>"
+                    or (hasattr(container_type, '__name__') and container_type.__name__ == 'Container')
+                )
+                if is_container_type:
+                    # This is an Injectable class - pass container explicitly
+                    return cls(container=self)
 
             # Resolve dependencies
             kwargs: Dict[str, Any] = {}
@@ -627,14 +636,23 @@ class Container:
             # Remove 'return' from type hints
             type_hints.pop("return", None)
 
-            # Check if this is an Injectable class that needs the container
-            # Injectable classes have a special _inject_fields attribute and __init__ that expects container
-            if hasattr(cls, '_inject_fields') and cls._inject_fields:
-                # This is an Injectable class - pass container explicitly
-                return cls(container=self)
-
             # Get constructor signature
             sig = inspect.signature(init_method)
+
+            # Check if this is an Injectable class by looking for container: Container parameter
+            # Injectable classes have __init__(self, container: Container)
+            if 'container' in sig.parameters and 'container' in type_hints:
+                container_type = type_hints['container']
+                # Check if it's the Container type
+                is_container_type = (
+                    container_type is Container
+                    or (isinstance(container_type, type) and issubclass(container_type, Container))
+                    or str(container_type) == "<class 'inversipy.container.Container'>"
+                    or (hasattr(container_type, '__name__') and container_type.__name__ == 'Container')
+                )
+                if is_container_type:
+                    # This is an Injectable class - pass container explicitly
+                    return cls(container=self)
 
             # Resolve dependencies asynchronously
             kwargs: Dict[str, Any] = {}
