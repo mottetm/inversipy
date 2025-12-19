@@ -7,7 +7,7 @@ from .container import Container
 from .decorators import Inject
 
 try:
-    from fastapi import Depends
+    from fastapi import Depends, Request
 except ImportError:
     raise ImportError(
         "FastAPI is required for inversipy.fastapi integration. "
@@ -15,43 +15,35 @@ except ImportError:
     )
 
 
-# Global container for FastAPI dependency injection
-_container: Container | None = None
+def get_container(request: Request) -> Container:
+    """FastAPI dependency that returns the container from app.state.
 
-
-def get_container() -> Container:
-    """FastAPI dependency that returns the configured container.
-    
-    Raises:
-        RuntimeError: If container hasn't been configured with setup_container()
-    """
-    if _container is None:
-        raise RuntimeError(
-            "Container not configured for FastAPI. "
-            "Call setup_container(container) before using @inject decorator."
-        )
-    return _container
-
-
-def setup_container(container: Container) -> None:
-    """Configure the global container for FastAPI dependency injection.
-    
     Args:
-        container: The Container instance to use for dependency resolution
-        
+        request: FastAPI request object
+
+    Returns:
+        Container instance stored in app.state
+
+    Raises:
+        RuntimeError: If container hasn't been configured in app.state
+
     Example:
         ```python
         from fastapi import FastAPI
         from inversipy import Container
-        from inversipy.fastapi import setup_container
-        
+
         app = FastAPI()
-        container = Container()
-        setup_container(container)
+        app.state.container = Container()
+
+        # Container is automatically available via Depends
         ```
     """
-    global _container
-    _container = container
+    if not hasattr(request.app.state, 'container'):
+        raise RuntimeError(
+            "Container not configured in app.state. "
+            "Set it with: app.state.container = Container()"
+        )
+    return request.app.state.container
 
 
 T = TypeVar('T')

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from inversipy import Container
 from inversipy.decorators import Inject
-from inversipy.fastapi import setup_container, inject, get_container
+from inversipy.fastapi import inject, get_container
 
 
 class Database:
@@ -39,7 +39,7 @@ class TestFastAPIIntegration:
         app = FastAPI()
         container = Container()
         container.register(Database)
-        setup_container(container)
+        app.state.container = container
         
         @app.get("/users")
         @inject
@@ -58,7 +58,7 @@ class TestFastAPIIntegration:
         container = Container()
         container.register(Database)
         container.register(Logger)
-        setup_container(container)
+        app.state.container = container
         
         @app.get("/users")
         @inject
@@ -81,7 +81,7 @@ class TestFastAPIIntegration:
         container = Container()
         container.register(Database)
         container.register(Logger)
-        setup_container(container)
+        app.state.container = container
         
         @app.get("/users")
         @inject
@@ -110,7 +110,7 @@ class TestFastAPIIntegration:
         app = FastAPI()
         container = Container()
         container.register(Database)
-        setup_container(container)
+        app.state.container = container
         
         @app.get("/users")
         @inject
@@ -124,22 +124,28 @@ class TestFastAPIIntegration:
         assert response.json() == {"users": ["user1", "user2", "user3"]}
     
     def test_get_container_without_setup_raises(self) -> None:
-        """Test that get_container raises if setup_container wasn't called."""
-        # Reset global container
-        import inversipy.fastapi as fastapi_module
-        fastapi_module._container = None
-        
+        """Test that get_container raises if app.state.container wasn't set."""
+        app = FastAPI()
+        # Don't set app.state.container
+
+        @app.get("/test")
+        @inject
+        def test_route(db: Annotated[Database, Inject]):
+            return {"data": "test"}
+
+        client = TestClient(app)
+
         with pytest.raises(RuntimeError) as exc_info:
-            get_container()
-        
-        assert "Container not configured" in str(exc_info.value)
+            client.get("/test")
+
+        assert "Container not configured in app.state" in str(exc_info.value)
     
     def test_inject_preserves_function_metadata(self) -> None:
         """Test that @inject preserves function name and docstring."""
         app = FastAPI()
         container = Container()
         container.register(Database)
-        setup_container(container)
+        app.state.container = container
         
         @app.get("/users")
         @inject

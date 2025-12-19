@@ -607,14 +607,14 @@ from typing import Annotated
 from fastapi import FastAPI
 from inversipy import Container
 from inversipy.decorators import Inject
-from inversipy.fastapi import setup_container, inject
+from inversipy.fastapi import inject
 
 # Setup
 app = FastAPI()
 container = Container()
 container.register(Database)
 container.register(Logger)
-setup_container(container)
+app.state.container = container
 
 # Use @inject to auto-resolve dependencies
 @app.get("/users")
