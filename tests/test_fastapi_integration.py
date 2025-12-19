@@ -1,7 +1,5 @@
 """Tests for FastAPI integration."""
 
-from typing import Annotated
-
 import pytest
 
 # Check if FastAPI is available
@@ -44,7 +42,7 @@ class TestFastAPIIntegration:
 
         @app.get("/users")
         @inject
-        def get_users(db: Annotated[Database, Inject]):
+        def get_users(db: Inject[Database]):
             return {"users": db.query("SELECT * FROM users")}
 
         client = TestClient(app)
@@ -63,7 +61,7 @@ class TestFastAPIIntegration:
 
         @app.get("/users")
         @inject
-        def get_users(db: Annotated[Database, Inject], logger: Annotated[Logger, Inject]):
+        def get_users(db: Inject[Database], logger: Inject[Logger]):
             logger.info("Fetching users")
             return {"users": db.query("SELECT * FROM users")}
 
@@ -83,9 +81,7 @@ class TestFastAPIIntegration:
 
         @app.get("/users")
         @inject
-        def get_users(
-            db: Annotated[Database, Inject], logger: Annotated[Logger, Inject], limit: int = 10
-        ):
+        def get_users(db: Inject[Database], logger: Inject[Logger], limit: int = 10):
             logger.info(f"Fetching {limit} users")
             return {"users": db.query("SELECT * FROM users"), "limit": limit}
 
@@ -110,7 +106,7 @@ class TestFastAPIIntegration:
 
         @app.get("/users")
         @inject
-        async def get_users(db: Annotated[Database, Inject]):
+        async def get_users(db: Inject[Database]):
             return {"users": db.query("SELECT * FROM users")}
 
         client = TestClient(app)
@@ -126,7 +122,7 @@ class TestFastAPIIntegration:
 
         @app.get("/test")
         @inject
-        def test_route(db: Annotated[Database, Inject]):
+        def test_route(db: Inject[Database]):
             return {"data": "test"}
 
         client = TestClient(app)
@@ -145,7 +141,7 @@ class TestFastAPIIntegration:
 
         @app.get("/users")
         @inject
-        def get_users(db: Annotated[Database, Inject]):
+        def get_users(db: Inject[Database]):
             """Get all users from database."""
             return {"users": db.query("SELECT * FROM users")}
 

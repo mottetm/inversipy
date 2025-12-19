@@ -1,7 +1,5 @@
 """Tests for dependency injection utilities."""
 
-from typing import Annotated
-
 import pytest
 
 from inversipy import Container, Inject, Injectable
@@ -166,7 +164,7 @@ class TestInject:
 
 
 class TestInjectable:
-    """Test Injectable base class with Annotated[Type, Inject] pattern."""
+    """Test Injectable base class with Inject[T] pattern."""
 
     def test_injectable_with_single_dependency(self) -> None:
         """Test Injectable with single dependency."""
@@ -174,7 +172,7 @@ class TestInjectable:
         container.register(SimpleService)
 
         class UserService(Injectable):
-            simple: Annotated[SimpleService, Inject]
+            simple: Inject[SimpleService]
 
             def get_value(self) -> str:
                 return f"user:{self.simple.get_value()}"
@@ -193,8 +191,8 @@ class TestInjectable:
         container.register(DependentService)
 
         class ComplexService(Injectable):
-            simple: Annotated[SimpleService, Inject]
-            dependent: Annotated[DependentService, Inject]
+            simple: Inject[SimpleService]
+            dependent: Inject[DependentService]
 
             def get_combined(self) -> str:
                 return f"{self.simple.get_value()}+{self.dependent.get_value()}"
@@ -210,7 +208,7 @@ class TestInjectable:
         container.register(SimpleService)
 
         class UserService(Injectable):
-            simple: Annotated[SimpleService, Inject]
+            simple: Inject[SimpleService]
 
             def get_value(self) -> str:
                 return f"user:{self.simple.get_value()}"
@@ -242,7 +240,7 @@ class TestInjectable:
         container.register(SimpleService)
 
         class ServiceWithInit(Injectable):
-            simple: Annotated[SimpleService, Inject]
+            simple: Inject[SimpleService]
 
             def __init__(self):
                 self.custom_value = "initialized"
@@ -262,7 +260,7 @@ class TestInjectable:
         container.register(SimpleService)
 
         class UserService(Injectable):
-            simple: Annotated[SimpleService, Inject]
+            simple: Inject[SimpleService]
 
             def get_value(self) -> str:
                 return f"user:{self.simple.get_value()}"
