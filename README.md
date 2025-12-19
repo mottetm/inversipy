@@ -8,7 +8,7 @@ A powerful and type-safe dependency injection/IoC (Inversion of Control) library
 - **Container validation** - Ensure all dependencies can be resolved before runtime
 - **Module system** - Organize dependencies with public/private access control
 - **Parent-child container hierarchy** - Create child containers that inherit from parent
-- **Multiple scopes** - Singleton, Transient, Request, and AsyncSingleton scopes
+- **Multiple scopes** - Singleton, Transient, and Request scopes
 - **Function injection** - Run functions with automatic dependency injection via `container.run()`
 - **Property injection** - Injectable base class for clean, declarative dependency injection
 - **Async support** - First-class support for async dependencies
@@ -165,25 +165,6 @@ def sync_handler():
     service1 = container.get(RequestService)
     service2 = container.get(RequestService)
     assert service1 is service2  # Same instance in same context
-```
-
-#### Async Singleton Scope
-
-For async dependencies:
-
-```python
-from inversipy.scopes import AsyncSingletonScope
-
-async_scope = AsyncSingletonScope()
-
-async def get_service():
-    scope = AsyncSingletonScope()
-
-    async def factory():
-        return await create_async_service()
-
-    service = await scope.get_async(factory)
-    return service
 ```
 
 ### Modules

@@ -5,7 +5,7 @@ Inversipy provides a flexible dependency injection container with support for:
 - Container validation
 - Modules with public/private dependencies
 - Parent-child container hierarchy
-- Multiple scopes (Singleton, Transient, Request, AsyncSingleton)
+- Multiple scopes (Singleton, Transient, Request)
 - Function injection via container.run()
 - Property injection via Injectable base class
 - Pure classes with no container coupling
