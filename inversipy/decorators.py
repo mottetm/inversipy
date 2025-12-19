@@ -97,7 +97,7 @@ class Injectable:
                             break
 
         # Store inject fields metadata on the class
-        cls._inject_fields = inject_fields
+        setattr(cls, "_inject_fields", inject_fields)
 
         # Generate __init__ method
         if inject_fields:
@@ -139,4 +139,4 @@ class Injectable:
                 params.append(Parameter(name, Parameter.POSITIONAL_OR_KEYWORD, annotation=typ))
             new_init.__signature__ = Signature(params)  # type: ignore
 
-            cls.__init__ = new_init
+            setattr(cls, "__init__", new_init)

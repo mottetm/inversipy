@@ -8,7 +8,7 @@ from .container import Container
 from .decorators import Inject
 
 try:
-    from fastapi import Depends, Request
+    from fastapi import Depends, Request  # type: ignore[import-not-found]
 except ImportError:
     raise ImportError(
         "FastAPI is required for inversipy.fastapi integration. "
@@ -39,12 +39,13 @@ def get_container(request: Request) -> Container:
         # Container is automatically available via Depends
         ```
     """
-    if not hasattr(request.app.state, 'container'):
+    if not hasattr(request.app.state, "container"):
         raise RuntimeError(
             "Container not configured in app.state. "
             "Set it with: app.state.container = Container()"
         )
-    return request.app.state.container
+    container: Container = request.app.state.container
+    return container
 
 
 def inject[T](func: Callable[..., T]) -> Callable[..., T]:
@@ -119,10 +120,11 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
 
     # Create wrapper function that FastAPI will actually call
     if inspect.iscoroutinefunction(func):
+
         async def wrapper(container: Container = Depends(get_container), **kwargs: Any) -> T:
             """Auto-generated async wrapper with dependency injection."""
             # Resolve injected dependencies from container
-            injected = {}
+            injected: dict[str, Any] = {}
             for param_name, param_type in inject_params.items():
                 injected[param_name] = container.get(param_type)
 
@@ -130,12 +132,14 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
             all_params = {**kwargs, **injected}
 
             # Call original function with all parameters
-            return await func(**all_params)  # type: ignore
+            return await func(**all_params)  # type: ignore[no-any-return]
+
     else:
-        def wrapper(container: Container = Depends(get_container), **kwargs: Any) -> T:
+
+        def wrapper(container: Container = Depends(get_container), **kwargs: Any) -> T:  # type: ignore[misc]
             """Auto-generated wrapper with dependency injection."""
             # Resolve injected dependencies from container
-            injected = {}
+            injected: dict[str, Any] = {}
             for param_name, param_type in inject_params.items():
                 injected[param_name] = container.get(param_type)
 
@@ -143,7 +147,7 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
             all_params = {**kwargs, **injected}
 
             # Call original function with all parameters
-            return func(**all_params)  # type: ignore
+            return func(**all_params)
 
     # Build new signature for the wrapper
     # FastAPI will see: (<normal_params>, container: Container = Depends(...))
@@ -156,10 +160,10 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
     # Add container as last keyword-only parameter
     new_params.append(
         inspect.Parameter(
-            'container',
+            "container",
             inspect.Parameter.KEYWORD_ONLY,
             default=Depends(get_container),
-            annotation=Container
+            annotation=Container,
         )
     )
 
