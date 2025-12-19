@@ -1,13 +1,14 @@
 """Tests for the Module class."""
 
 import pytest
+
 from inversipy import (
-    Scopes,
     Container,
+    DependencyNotFoundError,
     Module,
     ModuleBuilder,
-    DependencyNotFoundError,
     RegistrationError,
+    Scopes,
 )
 
 
@@ -163,7 +164,7 @@ class TestModuleLoading:
 
         # Initially can resolve
         assert container.has(PublicService)
-        service1 = container.get(PublicService)
+        container.get(PublicService)
 
         # Add a new public dependency to the module
         module.register(PrivateService, public=True)
@@ -204,33 +205,21 @@ class TestModuleBuilder:
 
     def test_builder_bind(self) -> None:
         """Test binding with builder."""
-        module = (
-            ModuleBuilder("TestModule")
-            .bind(PrivateService)
-            .bind_public(PublicService)
-            .build()
-        )
+        module = ModuleBuilder("TestModule").bind(PrivateService).bind_public(PublicService).build()
 
         assert not module.is_public(PrivateService)
         assert module.is_public(PublicService)
 
     def test_builder_export(self) -> None:
         """Test exporting with builder."""
-        module = (
-            ModuleBuilder("TestModule")
-            .bind(PublicService)
-            .export(PublicService)
-            .build()
-        )
+        module = ModuleBuilder("TestModule").bind(PublicService).export(PublicService).build()
 
         assert module.is_public(PublicService)
 
     def test_builder_with_scopes(self) -> None:
         """Test builder with different scopes."""
         module = (
-            ModuleBuilder("TestModule")
-            .bind_public(PublicService, scope=Scopes.SINGLETON)
-            .build()
+            ModuleBuilder("TestModule").bind_public(PublicService, scope=Scopes.SINGLETON).build()
         )
 
         container = Container()

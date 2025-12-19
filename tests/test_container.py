@@ -1,13 +1,15 @@
 """Tests for the Container class."""
 
 import asyncio
+
 import pytest
+
 from inversipy import (
-    Container,
-    Scopes,
-    DependencyNotFoundError,
     CircularDependencyError,
+    Container,
+    DependencyNotFoundError,
     ResolutionError,
+    Scopes,
 )
 
 
@@ -256,9 +258,7 @@ class TestFactoryDependencyInjection:
         container = Container()
         container.register(SimpleService)
 
-        def create_with_optional(
-            simple: SimpleService, prefix: str = "custom"
-        ) -> DependentService:
+        def create_with_optional(simple: SimpleService, prefix: str = "custom") -> DependentService:
             # Just use the simple service, ignore prefix for this test
             return DependentService(simple)
 
@@ -307,9 +307,7 @@ class TestFactoryDependencyInjection:
             call_count["count"] += 1
             return DependentService(simple)
 
-        container.register_factory(
-            DependentService, create_dependent, scope=Scopes.SINGLETON
-        )
+        container.register_factory(DependentService, create_dependent, scope=Scopes.SINGLETON)
 
         service1 = container.get(DependentService)
         service2 = container.get(DependentService)
@@ -328,9 +326,7 @@ class TestFactoryDependencyInjection:
             call_count["count"] += 1
             return DependentService(simple)
 
-        container.register_factory(
-            DependentService, create_dependent, scope=Scopes.TRANSIENT
-        )
+        container.register_factory(DependentService, create_dependent, scope=Scopes.TRANSIENT)
 
         service1 = container.get(DependentService)
         service2 = container.get(DependentService)
@@ -348,9 +344,7 @@ class TestFactoryDependencyInjection:
             await asyncio.sleep(0.01)  # Simulate async work
             return DependentService(simple)
 
-        container.register_factory(
-            DependentService, create_dependent_async, scope=Scopes.SINGLETON
-        )
+        container.register_factory(DependentService, create_dependent_async, scope=Scopes.SINGLETON)
 
         service = await container.get_async(DependentService)
         assert isinstance(service, DependentService)
@@ -589,6 +583,7 @@ class TestAsyncOperations:
         # Test with TRANSIENT
         class AnotherService:
             pass
+
         container.register(AnotherService, scope=Scopes.TRANSIENT)
         service3 = await container.get_async(AnotherService)
         service4 = await container.get_async(AnotherService)
@@ -596,8 +591,10 @@ class TestAsyncOperations:
 
         # Test with REQUEST
         scope = Scopes.REQUEST
+
         class ThirdService:
             pass
+
         container.register(ThirdService, scope=scope)
         service5 = await container.get_async(ThirdService)
         service6 = await container.get_async(ThirdService)

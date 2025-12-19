@@ -11,20 +11,20 @@ Inversipy provides a flexible dependency injection container with support for:
 - Pure classes with no container coupling
 """
 
-from .container import Container, Binding
-from .module import Module, ModuleBuilder
-from .scopes import Scopes
-from .types import Factory, DependencyKey, ModuleProtocol
+from .container import Binding, Container
 from .decorators import Inject, Injectable
 from .exceptions import (
-    InversipyError,
-    DependencyNotFoundError,
     CircularDependencyError,
-    ValidationError,
+    DependencyNotFoundError,
     InvalidScopeError,
+    InversipyError,
     RegistrationError,
     ResolutionError,
+    ValidationError,
 )
+from .module import Module, ModuleBuilder
+from .scopes import Scopes
+from .types import DependencyKey, Factory, ModuleProtocol
 
 __version__ = "0.1.0"
 

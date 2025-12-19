@@ -193,7 +193,10 @@ def demonstrate_module_composition() -> None:
     print(f"✓ Can access Database from composed db_module: {database.query('users')}")
 
     auth_service = container.get(AuthService)
-    print(f"✓ Can access AuthService from composed auth_module: {auth_service.authenticate('token')}")
+    print(
+        f"✓ Can access AuthService from composed auth_module: "
+        f"{auth_service.authenticate('token')}"
+    )
 
 
 def demonstrate_dynamic_module_updates() -> None:
