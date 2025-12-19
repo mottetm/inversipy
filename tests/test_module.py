@@ -174,8 +174,8 @@ class TestModuleLoading:
         service2 = container.get(PrivateService)
         assert isinstance(service2, PrivateService)
 
-    def test_module_composition_is_public_check(self) -> None:
-        """Test that parent module checks is_public on registered child modules."""
+    def test_module_composition_visibility_is_not_transitive(self) -> None:
+        """Test that child module public dependencies are NOT transitively public."""
         # Create child module with public dependency
         child_module = Module("ChildModule")
         child_module.register(PublicService, public=True)
@@ -185,19 +185,85 @@ class TestModuleLoading:
         parent_module = Module("ParentModule")
         parent_module.register_module(child_module)
 
-        # Parent module should report child's public deps as public
-        assert parent_module.is_public(PublicService)
-        # But not child's private deps
+        # Parent module should NOT report child's public deps as public
+        # Visibility is not transitive
+        assert not parent_module.is_public(PublicService)
         assert not parent_module.is_public(PrivateService)
 
         # Register parent in container
         container = Container()
         container.register_module(parent_module)
 
-        # Container should be able to resolve public dep from child via parent
+        # Container should NOT be able to access child module's deps via parent
+        assert not container.has(PublicService)
+        with pytest.raises(DependencyNotFoundError):
+            container.get(PublicService)
+
+    def test_module_can_reexport_child_dependencies(self) -> None:
+        """Test that parent module can explicitly re-export child module dependencies."""
+        # Create child module with public dependency
+        child_module = Module("ChildModule")
+        child_module.register(PublicService, public=True)
+        child_module.register(PrivateService, public=False)
+
+        # Create parent module that registers and re-exports child dependencies
+        parent_module = Module("ParentModule")
+        parent_module.register_module(child_module)
+        parent_module.export(PublicService)  # Explicitly re-export
+
+        # Now parent module should report it as public
+        assert parent_module.is_public(PublicService)
+        # But still not the private one
+        assert not parent_module.is_public(PrivateService)
+
+        # Register parent in container
+        container = Container()
+        container.register_module(parent_module)
+
+        # Container should be able to resolve the re-exported dependency
         assert container.has(PublicService)
         service = container.get(PublicService)
         assert isinstance(service, PublicService)
+
+        # But not the private one
+        assert not container.has(PrivateService)
+
+    def test_cannot_reexport_child_private_dependency(self) -> None:
+        """Test that parent cannot re-export a child's private dependency."""
+        child_module = Module("ChildModule")
+        child_module.register(PrivateService, public=False)
+
+        parent_module = Module("ParentModule")
+        parent_module.register_module(child_module)
+
+        # Cannot re-export because it's not public in child module
+        with pytest.raises(RegistrationError):
+            parent_module.export(PrivateService)
+
+    def test_internal_resolution_can_use_child_module_deps(self) -> None:
+        """Test that internal resolution can still use child module dependencies."""
+        # Create child module with a public dependency
+        child_module = Module("ChildModule")
+        child_module.register(PrivateService, public=True)
+
+        # Create parent module with a service that depends on child's dep
+        parent_module = Module("ParentModule")
+        parent_module.register_module(child_module)
+        parent_module.register(DependentService, public=True)
+        # Note: We don't re-export PrivateService, but DependentService depends on it
+
+        # Register parent in container
+        container = Container()
+        container.register_module(parent_module)
+
+        # DependentService should be resolvable and have its dependency injected
+        assert container.has(DependentService)
+        service = container.get(DependentService)
+        assert isinstance(service, DependentService)
+        assert isinstance(service.private, PrivateService)
+
+        # But PrivateService itself should NOT be directly accessible
+        assert not container.has(PrivateService)
 
 
 class TestModuleBuilder:

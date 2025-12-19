@@ -103,6 +103,10 @@ class Module(Container):
     def export(self, *interfaces: type[Any]) -> "Module":
         """Mark dependencies as public/exported.
 
+        This can be used to:
+        1. Make a private dependency public
+        2. Re-export a dependency from a child module
+
         Args:
             *interfaces: Types to export
 
@@ -110,15 +114,29 @@ class Module(Container):
             Self for chaining
 
         Raises:
-            RegistrationError: If any interface is not registered
+            RegistrationError: If any interface is not available
         """
         for interface in interfaces:
-            if interface not in self._bindings:
+            # Check if directly registered
+            if interface in self._bindings:
+                self._public_keys.add(interface)
+                continue
+
+            # Check if available from a child module (for re-exporting)
+            available_from_child = False
+            for module in self._modules:
+                if hasattr(module, "is_public") and module.is_public(interface):
+                    available_from_child = True
+                    break
+
+            if available_from_child:
+                self._public_keys.add(interface)
+            else:
                 raise RegistrationError(
                     f"Cannot export '{interface.__name__}' - "
-                    f"not registered in module '{self._name}'"
+                    f"not registered in module '{self._name}' "
+                    f"and not available from any child module"
                 )
-            self._public_keys.add(interface)
 
         return self
 
@@ -194,22 +212,19 @@ class Module(Container):
     def is_public(self, interface: type[Any]) -> bool:
         """Check if a dependency is public.
 
+        Visibility is NOT transitive. Dependencies from child modules are only
+        accessible internally for dependency resolution, not externally.
+        To expose a child module's dependency externally, use export().
+
         Args:
             interface: Type to check
 
         Returns:
             True if public, False otherwise
         """
-        # Check if directly registered as public
-        if interface in self._public_keys:
-            return True
-
-        # Check if available from a registered module
-        for module in self._modules:
-            if hasattr(module, "is_public") and module.is_public(interface):
-                return True
-
-        return False
+        # Only check if directly registered/exported as public
+        # Child module dependencies are not transitively public
+        return interface in self._public_keys
 
     def get_public_dependencies(self) -> list[type[Any]]:
         """Get list of all public dependencies.

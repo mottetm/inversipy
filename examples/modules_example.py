@@ -178,6 +178,9 @@ def demonstrate_module_composition() -> None:
     app_module.register_module(db_module)
     app_module.register_module(auth_module)
     app_module.register(AppService, public=True)
+    # Explicitly re-export dependencies from child modules that should be public
+    # Visibility is NOT transitive - child module deps are only accessible internally
+    app_module.export(Database, AuthService)
 
     # Register app module in container
     container = Container()
@@ -188,13 +191,13 @@ def demonstrate_module_composition() -> None:
     users = app_service.get_authenticated_users("valid-token")
     print(f"✓ Composed modules work together: {users}")
 
-    # Can access public dependencies from nested modules
+    # Can access re-exported dependencies from nested modules
     database = container.get(Database)
-    print(f"✓ Can access Database from composed db_module: {database.query('users')}")
+    print(f"✓ Can access Database (re-exported from db_module): {database.query('users')}")
 
     auth_service = container.get(AuthService)
     print(
-        f"✓ Can access AuthService from composed auth_module: "
+        f"✓ Can access AuthService (re-exported from auth_module): "
         f"{auth_service.authenticate('token')}"
     )
 
