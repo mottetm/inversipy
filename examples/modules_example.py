@@ -203,6 +203,7 @@ def demonstrate_dynamic_module_updates() -> None:
 
     db_module = Module("Database")
     db_module.register(DatabaseConnection, scope=Scopes.SINGLETON)
+    db_module.register(QueryBuilder, scope=Scopes.SINGLETON)
     db_module.register(Database, scope=Scopes.SINGLETON, public=True)
 
     container = Container()
