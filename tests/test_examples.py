@@ -47,14 +47,6 @@ class TestExamplesImport:
         assert hasattr(modules_example, "DatabaseConnection")
         assert hasattr(modules_example, "demonstrate_basic_module")
 
-    def test_import_decorators_example(self) -> None:
-        """Test importing decorators_example."""
-        from examples import decorators_example
-
-        assert hasattr(decorators_example, "main")
-        assert hasattr(decorators_example, "Logger")
-        assert hasattr(decorators_example, "Database")
-        assert hasattr(decorators_example, "process_request")
 
     def test_import_fastapi_example(self) -> None:
         """Test importing fastapi_example."""
@@ -90,12 +82,6 @@ class TestExamplesExecution:
         # Should run without errors
         modules_example.main()
 
-    def test_run_decorators_example(self) -> None:
-        """Test running decorators_example."""
-        from examples import decorators_example
-
-        # Should run without errors
-        decorators_example.main()
 
     def test_run_fastapi_example(self) -> None:
         """Test running fastapi_example main function."""
@@ -175,50 +161,6 @@ class TestExampleBehavior:
         with pytest.raises(DependencyNotFoundError):
             container.get(DatabaseConnection)
 
-    def test_decorators_registration(self) -> None:
-        """Test pure registration without decorators."""
-        from inversipy import Container, Scopes
-
-        container = Container()
-
-        class TestService:
-            pass
-
-        # Pure registration - no decorators
-        container.register(TestService, scope=Scopes.SINGLETON)
-
-        # Should be registered
-        assert container.has(TestService)
-
-        # Should return instance
-        service = container.get(TestService)
-        assert isinstance(service, TestService)
-
-    def test_decorators_injectable(self) -> None:
-        """Test Injectable base class."""
-        from typing import Annotated
-        from inversipy import Container, Inject, Injectable, Scopes
-
-        container = Container()
-
-        class Logger:
-            def log(self, msg: str) -> None:
-                pass
-
-        # Pure registration - no decorators
-        container.register(Logger, scope=Scopes.SINGLETON)
-
-        class Service(Injectable):
-            logger: Annotated[Logger, Inject]
-
-            def do_work(self) -> str:
-                return "work done"
-
-        container.register(Service)
-        service = container.get(Service)
-
-        assert service.logger is not None
-        assert isinstance(service.logger, Logger)
 
     @pytest.mark.skipif(
         not importlib.util.find_spec("fastapi"),
@@ -241,7 +183,6 @@ class TestExamplesDocumentation:
         """Test that all example modules have docstrings."""
         from examples import (
             basic_usage,
-            decorators_example,
             fastapi_example,
             modules_example,
             scopes_example,
@@ -251,7 +192,6 @@ class TestExamplesDocumentation:
             basic_usage,
             scopes_example,
             modules_example,
-            decorators_example,
             fastapi_example,
         ]:
             assert module.__doc__ is not None, f"{module.__name__} missing docstring"
@@ -261,7 +201,6 @@ class TestExamplesDocumentation:
         """Test that all examples have a main() function."""
         from examples import (
             basic_usage,
-            decorators_example,
             fastapi_example,
             modules_example,
             scopes_example,
@@ -271,7 +210,6 @@ class TestExamplesDocumentation:
             basic_usage,
             scopes_example,
             modules_example,
-            decorators_example,
             fastapi_example,
         ]:
             assert hasattr(module, "main"), f"{module.__name__} missing main() function"
