@@ -914,11 +914,10 @@ class Container:
                 deps = self._get_implementation_dependencies(binding.implementation)
                 # Only include dependencies that are registered in this container
                 registered_deps = [
-                    d for d in deps
+                    d
+                    for d in deps
                     if d in self._bindings
-                    or any(
-                        d in m._bindings for m in self._modules if hasattr(m, "_bindings")
-                    )
+                    or any(d in m._bindings for m in self._modules if hasattr(m, "_bindings"))
                 ]
                 graph[key] = registered_deps
 
@@ -931,13 +930,12 @@ class Container:
                     if binding.implementation is not None and isinstance(key, type):
                         deps = self._get_implementation_dependencies(binding.implementation)
                         registered_deps = [
-                            d for d in deps
+                            d
+                            for d in deps
                             if d in self._bindings
                             or d in module._bindings
                             or any(
-                                d in m._bindings
-                                for m in self._modules
-                                if hasattr(m, "_bindings")
+                                d in m._bindings for m in self._modules if hasattr(m, "_bindings")
                             )
                         ]
                         graph[key] = registered_deps
