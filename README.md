@@ -597,3 +597,44 @@ If inversipy doesn't fit your needs, check out these alternatives:
 ## Why "inversipy"?
 
 The name combines "inversion" (as in Inversion of Control) with "py" (Python). It's about inverting control flow - instead of your code creating dependencies, the container provides them.
+
+## FastAPI Integration
+
+Inversipy provides seamless FastAPI integration with the `@inject` decorator:
+
+```python
+from typing import Annotated
+from fastapi import FastAPI
+from inversipy import Container
+from inversipy.decorators import Inject
+from inversipy.fastapi import setup_container, inject
+
+# Setup
+app = FastAPI()
+container = Container()
+container.register(Database)
+container.register(Logger)
+setup_container(container)
+
+# Use @inject to auto-resolve dependencies
+@app.get("/users")
+@inject
+async def get_users(
+    db: Annotated[Database, Inject],
+    logger: Annotated[Logger, Inject],
+    limit: int = 10
+):
+    logger.info(f"Fetching {limit} users")
+    return db.query("SELECT * FROM users LIMIT ?", limit)
+```
+
+The `@inject` decorator:
+- Identifies parameters marked with `Annotated[Type, Inject]`
+- Resolves them from the container automatically
+- Leaves normal FastAPI parameters (query params, body, etc.) unchanged
+- Works with both sync and async route handlers
+
+Install FastAPI support:
+```bash
+pip install inversipy fastapi
+```
