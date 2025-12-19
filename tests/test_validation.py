@@ -1,6 +1,7 @@
 """Tests for container validation."""
 
 import pytest
+
 from inversipy import Container, ValidationError
 
 

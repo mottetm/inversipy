@@ -100,7 +100,10 @@ def demonstrate_request_scope() -> None:
     print(f"Counter 1 after increment - Value: {counter1.value}")
 
     counter2 = container.get(Counter)
-    print(f"Counter 2 (same context) - Instance ID: {counter2.instance_id}, Value: {counter2.value}")
+    print(
+        f"Counter 2 (same context) - Instance ID: {counter2.instance_id}, "
+        f"Value: {counter2.value}"
+    )
 
     # Verify they're the same within context
     assert counter1 is counter2, "Should be same instance within context"

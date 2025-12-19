@@ -1,6 +1,7 @@
 """Type definitions and protocols for the inversipy library."""
 
-from typing import Any, Callable, Protocol, Type, Union
+from collections.abc import Callable
+from typing import Any, Protocol
 
 type Factory[T] = Callable[..., T]
 
@@ -17,7 +18,7 @@ class ModuleProtocol(Protocol):
     DependencyNotFoundError, and has() should return False.
     """
 
-    def get[T](self, interface: Type[T]) -> T:
+    def get[T](self, interface: type[T]) -> T:
         """Resolve a dependency synchronously.
 
         Args:
@@ -31,7 +32,7 @@ class ModuleProtocol(Protocol):
         """
         ...
 
-    async def get_async[T](self, interface: Type[T]) -> T:
+    async def get_async[T](self, interface: type[T]) -> T:
         """Resolve a dependency asynchronously.
 
         Args:
@@ -45,7 +46,7 @@ class ModuleProtocol(Protocol):
         """
         ...
 
-    def has(self, interface: Type[Any]) -> bool:
+    def has(self, interface: type[Any]) -> bool:
         """Check if a dependency is publicly available without creating an instance.
 
         Args:
@@ -66,4 +67,4 @@ class Provider[T](Protocol):
 
 
 # Type alias for dependency identifiers
-DependencyKey = Union[type, str]
+DependencyKey = type | str

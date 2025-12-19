@@ -1,6 +1,6 @@
 """Module implementation for organizing dependencies."""
 
-from typing import Any, List, Optional, Set, Type
+from typing import Any
 
 from .container import Container
 from .exceptions import DependencyNotFoundError, RegistrationError
@@ -23,15 +23,15 @@ class Module(Container):
             name: Name of the module
         """
         super().__init__(parent=None, name=f"Module({name})")
-        self._public_keys: Set[Type[Any]] = set()
+        self._public_keys: set[type[Any]] = set()
 
     def register[T](
         self,
-        interface: Type[T],
-        implementation: Optional[Type[T]] = None,
-        factory: Optional[Factory[T]] = None,
+        interface: type[T],
+        implementation: type[T] | None = None,
+        factory: Factory[T] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
-        instance: Optional[T] = None,
+        instance: T | None = None,
         public: bool = False,
     ) -> "Module":
         """Register a dependency in the module.
@@ -67,7 +67,7 @@ class Module(Container):
 
     def register_factory[T](
         self,
-        interface: Type[T],
+        interface: type[T],
         factory: Factory[T],
         scope: Scopes = Scopes.TRANSIENT,
         public: bool = False,
@@ -86,7 +86,7 @@ class Module(Container):
         return self.register(interface, factory=factory, scope=scope, public=public)
 
     def register_instance[T](
-        self, interface: Type[T], instance: T, public: bool = False
+        self, interface: type[T], instance: T, public: bool = False
     ) -> "Module":
         """Register a pre-created instance.
 
@@ -100,7 +100,7 @@ class Module(Container):
         """
         return self.register(interface, instance=instance, public=public)
 
-    def export(self, *interfaces: Type[Any]) -> "Module":
+    def export(self, *interfaces: type[Any]) -> "Module":
         """Mark dependencies as public/exported.
 
         Args:
@@ -115,13 +115,14 @@ class Module(Container):
         for interface in interfaces:
             if interface not in self._bindings:
                 raise RegistrationError(
-                    f"Cannot export '{interface.__name__}' - not registered in module '{self._name}'"
+                    f"Cannot export '{interface.__name__}' - "
+                    f"not registered in module '{self._name}'"
                 )
             self._public_keys.add(interface)
 
         return self
 
-    def get[T](self, interface: Type[T]) -> T:
+    def get[T](self, interface: type[T]) -> T:
         """Resolve a dependency from the module.
 
         When called externally (from a Container), only public dependencies
@@ -149,7 +150,7 @@ class Module(Container):
         # Public dependency - resolve it
         return super().get(interface)
 
-    async def get_async[T](self, interface: Type[T]) -> T:
+    async def get_async[T](self, interface: type[T]) -> T:
         """Resolve a dependency from the module asynchronously.
 
         When called externally (from a Container), only public dependencies
@@ -177,7 +178,7 @@ class Module(Container):
         # Public dependency - resolve it
         return await super().get_async(interface)
 
-    def has(self, interface: Type[Any]) -> bool:
+    def has(self, interface: type[Any]) -> bool:
         """Check if a dependency is publicly available.
 
         This satisfies the ModuleProtocol requirement.
@@ -190,7 +191,7 @@ class Module(Container):
         """
         return self.is_public(interface)
 
-    def is_public(self, interface: Type[Any]) -> bool:
+    def is_public(self, interface: type[Any]) -> bool:
         """Check if a dependency is public.
 
         Args:
@@ -210,7 +211,7 @@ class Module(Container):
 
         return False
 
-    def get_public_dependencies(self) -> List[Type[Any]]:
+    def get_public_dependencies(self) -> list[type[Any]]:
         """Get list of all public dependencies.
 
         Returns:
@@ -242,11 +243,11 @@ class ModuleBuilder:
 
     def bind[T](
         self,
-        interface: Type[T],
-        implementation: Optional[Type[T]] = None,
-        factory: Optional[Factory[T]] = None,
+        interface: type[T],
+        implementation: type[T] | None = None,
+        factory: Factory[T] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
-        instance: Optional[T] = None,
+        instance: T | None = None,
     ) -> "ModuleBuilder":
         """Bind a dependency (private by default).
 
@@ -272,11 +273,11 @@ class ModuleBuilder:
 
     def bind_public[T](
         self,
-        interface: Type[T],
-        implementation: Optional[Type[T]] = None,
-        factory: Optional[Factory[T]] = None,
+        interface: type[T],
+        implementation: type[T] | None = None,
+        factory: Factory[T] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
-        instance: Optional[T] = None,
+        instance: T | None = None,
     ) -> "ModuleBuilder":
         """Bind a public dependency.
 
@@ -300,7 +301,7 @@ class ModuleBuilder:
         )
         return self
 
-    def export(self, *interfaces: Type[Any]) -> "ModuleBuilder":
+    def export(self, *interfaces: type[Any]) -> "ModuleBuilder":
         """Mark dependencies as public/exported.
 
         Args:

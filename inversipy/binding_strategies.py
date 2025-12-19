@@ -3,7 +3,8 @@
 import asyncio
 import contextvars
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional, Dict
+from collections.abc import Callable
+from typing import Any
 
 
 class BindingStrategy(ABC):
@@ -46,7 +47,7 @@ class SyncSingletonStrategy(BindingStrategy):
     """Singleton strategy for synchronous factories."""
 
     def __init__(self) -> None:
-        self._instance: Optional[Any] = None
+        self._instance: Any | None = None
         self._initialized = False
 
     def get(self, factory: Callable[[], Any]) -> Any:
@@ -75,15 +76,15 @@ class AsyncSingletonStrategy(BindingStrategy):
     """Singleton strategy for asynchronous factories."""
 
     def __init__(self) -> None:
-        self._instance: Optional[Any] = None
+        self._instance: Any | None = None
         self._initialized = False
         self._lock = asyncio.Lock()
 
     def get(self, factory: Callable[[], Any]) -> Any:
         from .exceptions import ResolutionError
+
         raise ResolutionError(
-            "Cannot use synchronous get() with async factory. "
-            "Use get_async() instead."
+            "Cannot use synchronous get() with async factory. " "Use get_async() instead."
         )
 
     async def get_async(self, factory: Callable[[], Any]) -> Any:
@@ -121,9 +122,9 @@ class AsyncTransientStrategy(BindingStrategy):
 
     def get(self, factory: Callable[[], Any]) -> Any:
         from .exceptions import ResolutionError
+
         raise ResolutionError(
-            "Cannot use synchronous get() with async factory. "
-            "Use get_async() instead."
+            "Cannot use synchronous get() with async factory. " "Use get_async() instead."
         )
 
     async def get_async(self, factory: Callable[[], Any]) -> Any:
@@ -137,8 +138,8 @@ class SyncRequestStrategy(BindingStrategy):
     """Request strategy for synchronous factories using contextvars."""
 
     def __init__(self) -> None:
-        self._context_instances: contextvars.ContextVar[Optional[Any]] = (
-            contextvars.ContextVar('sync_request_scope_instance', default=None)
+        self._context_instances: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
+            "sync_request_scope_instance", default=None
         )
 
     def get(self, factory: Callable[[], Any]) -> Any:
@@ -168,15 +169,15 @@ class AsyncRequestStrategy(BindingStrategy):
     """Request strategy for asynchronous factories using contextvars."""
 
     def __init__(self) -> None:
-        self._context_instances: contextvars.ContextVar[Optional[Any]] = (
-            contextvars.ContextVar('async_request_scope_instance', default=None)
+        self._context_instances: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
+            "async_request_scope_instance", default=None
         )
 
     def get(self, factory: Callable[[], Any]) -> Any:
         from .exceptions import ResolutionError
+
         raise ResolutionError(
-            "Cannot use synchronous get() with async factory. "
-            "Use get_async() instead."
+            "Cannot use synchronous get() with async factory. " "Use get_async() instead."
         )
 
     async def get_async(self, factory: Callable[[], Any]) -> Any:

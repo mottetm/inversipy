@@ -17,6 +17,7 @@ from typing import Annotated
 
 try:
     from fastapi import FastAPI
+
     from inversipy import Container, Scopes
     from inversipy.decorators import Inject
     from inversipy.fastapi import inject

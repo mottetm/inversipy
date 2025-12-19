@@ -47,7 +47,6 @@ class TestExamplesImport:
         assert hasattr(modules_example, "DatabaseConnection")
         assert hasattr(modules_example, "demonstrate_basic_module")
 
-
     def test_import_fastapi_example(self) -> None:
         """Test importing fastapi_example."""
         from examples import fastapi_example
@@ -82,7 +81,6 @@ class TestExamplesExecution:
         # Should run without errors
         modules_example.main()
 
-
     def test_run_fastapi_example(self) -> None:
         """Test running fastapi_example main function."""
         from examples import fastapi_example
@@ -96,8 +94,8 @@ class TestExampleBehavior:
 
     def test_basic_usage_container_validation(self) -> None:
         """Test that basic_usage validates container correctly."""
-        from inversipy import Container, Scopes
         from examples.basic_usage import Database, UserRepository, UserService
+        from inversipy import Container, Scopes
 
         container = Container()
         container.register(Database, scope=Scopes.SINGLETON)
@@ -114,8 +112,8 @@ class TestExampleBehavior:
 
     def test_scopes_singleton_behavior(self) -> None:
         """Test singleton behavior from scopes example."""
-        from inversipy import Container, Scopes
         from examples.scopes_example import Counter
+        from inversipy import Container, Scopes
 
         Counter.reset_count()
         container = Container()
@@ -128,8 +126,8 @@ class TestExampleBehavior:
 
     def test_scopes_transient_behavior(self) -> None:
         """Test transient behavior from scopes example."""
-        from inversipy import Container, Scopes
         from examples.scopes_example import Counter
+        from inversipy import Container, Scopes
 
         Counter.reset_count()
         container = Container()
@@ -142,9 +140,9 @@ class TestExampleBehavior:
 
     def test_modules_public_private_access(self) -> None:
         """Test module public/private access control."""
+        from examples.modules_example import Database, DatabaseConnection, QueryBuilder
         from inversipy import Container, Module, Scopes
         from inversipy.exceptions import DependencyNotFoundError
-        from examples.modules_example import Database, DatabaseConnection, QueryBuilder
 
         module = Module("Database")
         module.register(DatabaseConnection, scope=Scopes.SINGLETON)  # Private
@@ -161,7 +159,6 @@ class TestExampleBehavior:
         # Should not be able to get private dependency
         with pytest.raises(DependencyNotFoundError):
             container.get(DatabaseConnection)
-
 
     @pytest.mark.skipif(
         not importlib.util.find_spec("fastapi"),

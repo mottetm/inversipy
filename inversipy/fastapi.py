@@ -1,7 +1,8 @@
 """FastAPI integration for inversipy dependency injection."""
 
 import inspect
-from typing import Any, Callable, get_type_hints, get_args, get_origin, Annotated
+from collections.abc import Callable
+from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
 from .container import Container
 from .decorators import Inject
@@ -48,14 +49,14 @@ def get_container(request: Request) -> Container:
 
 def inject[T](func: Callable[..., T]) -> Callable[..., T]:
     """Decorator for FastAPI routes that auto-injects dependencies.
-    
+
     Transforms route handlers by:
     1. Identifying parameters marked with Annotated[Type, Inject]
     2. Resolving them from the container
     3. Passing them to the original function
-    
+
     The container is injected via FastAPI's Depends() mechanism.
-    
+
     Example:
         ```python
         @app.get("/users")
@@ -68,7 +69,7 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
             logger.info(f"Fetching {limit} users")
             return db.query("SELECT * FROM users LIMIT ?", limit)
         ```
-        
+
     The above is transformed to:
         ```python
         async def get_users(
@@ -83,11 +84,11 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
     # Get function signature and type hints
     sig = inspect.signature(func)
     type_hints = get_type_hints(func, include_extras=True)
-    
+
     # Identify which parameters need injection vs normal parameters
     inject_params: dict[str, type] = {}
     normal_params: list[tuple[str, inspect.Parameter]] = []
-    
+
     for param_name, param in sig.parameters.items():
         if param_name in type_hints:
             hint = type_hints[param_name]
@@ -97,14 +98,14 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
                 if len(args) >= 2:
                     actual_type = args[0]
                     metadata = args[1:]
-                    
+
                     # Check if Inject is in metadata
                     needs_injection = False
                     for meta in metadata:
                         if meta is Inject or (isinstance(meta, type) and issubclass(meta, Inject)):
                             needs_injection = True
                             break
-                    
+
                     if needs_injection:
                         inject_params[param_name] = actual_type
                     else:
@@ -115,7 +116,7 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
                 normal_params.append((param_name, param))
         else:
             normal_params.append((param_name, param))
-    
+
     # Create wrapper function that FastAPI will actually call
     if inspect.iscoroutinefunction(func):
         async def wrapper(container: Container = Depends(get_container), **kwargs: Any) -> T:
@@ -124,10 +125,10 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
             injected = {}
             for param_name, param_type in inject_params.items():
                 injected[param_name] = container.get(param_type)
-            
+
             # Merge with normal parameters passed by FastAPI
             all_params = {**kwargs, **injected}
-            
+
             # Call original function with all parameters
             return await func(**all_params)  # type: ignore
     else:
@@ -137,13 +138,13 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
             injected = {}
             for param_name, param_type in inject_params.items():
                 injected[param_name] = container.get(param_type)
-            
+
             # Merge with normal parameters passed by FastAPI
             all_params = {**kwargs, **injected}
-            
+
             # Call original function with all parameters
             return func(**all_params)  # type: ignore
-    
+
     # Build new signature for the wrapper
     # FastAPI will see: (<normal_params>, container: Container = Depends(...))
     new_params = []

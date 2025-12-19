@@ -5,7 +5,8 @@ implementations to the container.
 """
 
 import inspect
-from typing import Any, Callable, Optional, Type, get_type_hints, get_args, get_origin, Annotated
+from collections.abc import Callable
+from typing import Annotated, Any, get_args, get_origin
 
 
 class Inject:
@@ -70,10 +71,10 @@ class Injectable:
         super().__init_subclass__(**kwargs)
 
         # Scan class annotations for Inject markers
-        inject_fields: dict[str, Type[Any]] = {}
+        inject_fields: dict[str, type[Any]] = {}
 
         # Get annotations from the class (not inherited)
-        annotations = getattr(cls, '__annotations__', {})
+        annotations = getattr(cls, "__annotations__", {})
 
         for attr_name, annotation in annotations.items():
             # Check if this is Annotated[Type, Inject]
@@ -87,8 +88,10 @@ class Injectable:
 
                     # Check if Inject is in metadata
                     for meta in metadata:
-                        if isinstance(meta, Inject) or meta is Inject or (
-                            inspect.isclass(meta) and issubclass(meta, Inject)
+                        if (
+                            isinstance(meta, Inject)
+                            or meta is Inject
+                            or (inspect.isclass(meta) and issubclass(meta, Inject))
                         ):
                             inject_fields[attr_name] = actual_type
                             break
@@ -99,7 +102,7 @@ class Injectable:
         # Generate __init__ method
         if inject_fields:
             # Check if class already has custom __init__
-            has_custom_init = '__init__' in cls.__dict__
+            has_custom_init = "__init__" in cls.__dict__
             original_init = cls.__init__ if has_custom_init else None
 
             # Create function that accepts dependency parameters
@@ -125,12 +128,13 @@ class Injectable:
 
             # Set proper annotations on the function
             annotations = {name: typ for name, typ in zip(param_names, param_types)}
-            annotations['return'] = None
+            annotations["return"] = None
             new_init.__annotations__ = annotations
 
             # Create proper signature
             from inspect import Parameter, Signature
-            params = [Parameter('self', Parameter.POSITIONAL_OR_KEYWORD)]
+
+            params = [Parameter("self", Parameter.POSITIONAL_OR_KEYWORD)]
             for name, typ in zip(param_names, param_types):
                 params.append(Parameter(name, Parameter.POSITIONAL_OR_KEYWORD, annotation=typ))
             new_init.__signature__ = Signature(params)  # type: ignore

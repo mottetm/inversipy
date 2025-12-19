@@ -28,6 +28,7 @@ class Scopes(str, Enum):
         service = await container.get_async(AsyncService)
         ```
     """
+
     SINGLETON = "singleton"
     TRANSIENT = "transient"
     REQUEST = "request"

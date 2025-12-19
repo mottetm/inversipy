@@ -2,32 +2,29 @@
 
 import asyncio
 import inspect
+from collections.abc import Callable
 from typing import (
     Any,
-    Callable,
-    Dict,
-    List,
     Optional,
-    Type,
-    get_type_hints,
     cast,
+    get_type_hints,
 )
 
+from .binding_strategies import (
+    AsyncRequestStrategy,
+    AsyncSingletonStrategy,
+    AsyncTransientStrategy,
+    BindingStrategy,
+    SyncRequestStrategy,
+    SyncSingletonStrategy,
+    SyncTransientStrategy,
+)
 from .exceptions import (
     CircularDependencyError,
     DependencyNotFoundError,
     RegistrationError,
     ResolutionError,
     ValidationError,
-)
-from .binding_strategies import (
-    BindingStrategy,
-    SyncSingletonStrategy,
-    AsyncSingletonStrategy,
-    SyncTransientStrategy,
-    AsyncTransientStrategy,
-    SyncRequestStrategy,
-    AsyncRequestStrategy,
 )
 from .scopes import Scopes
 from .types import DependencyKey, Factory, ModuleProtocol
@@ -45,10 +42,10 @@ class Binding:
     def __init__(
         self,
         key: DependencyKey,
-        factory: Optional[Factory[Any]] = None,
-        implementation: Optional[Type[Any]] = None,
+        factory: Factory[Any] | None = None,
+        implementation: type[Any] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
-        instance: Optional[Any] = None,
+        instance: Any | None = None,
     ) -> None:
         """Initialize a binding.
 
@@ -122,13 +119,15 @@ class Binding:
         if self.factory is not None:
             if self._factory_has_params:
                 # Factory has parameters - resolve them from container
-                factory_func = lambda: self._call_factory_with_deps(container, self.factory)  # type: ignore
+                def factory_func():
+                    return self._call_factory_with_deps(container, self.factory)  # type: ignore
             else:
                 # Factory has no parameters - call directly
                 factory_func = self.factory
         elif self.implementation is not None:
             # Create a factory from the implementation type
-            factory_func = lambda: container._create_instance(self.implementation)  # type: ignore
+            def factory_func():
+                return container._create_instance(self.implementation)  # type: ignore
         else:
             raise ResolutionError(f"Cannot create instance for {self.key}")
 
@@ -152,7 +151,7 @@ class Binding:
             sig = inspect.signature(factory)
             type_hints = get_type_hints(factory)
 
-            kwargs: Dict[str, Any] = {}
+            kwargs: dict[str, Any] = {}
             for param_name, param in sig.parameters.items():
                 if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
                     continue
@@ -164,11 +163,13 @@ class Binding:
                     except DependencyNotFoundError:
                         if param.default is inspect.Parameter.empty:
                             raise ResolutionError(
-                                f"Cannot resolve factory parameter '{param_name}' of type {param_type} for {self.key}"
+                                f"Cannot resolve factory parameter '{param_name}' "
+                                f"of type {param_type} for {self.key}"
                             )
                 elif param.default is inspect.Parameter.empty:
                     raise ResolutionError(
-                        f"Factory parameter '{param_name}' has no type hint and no default value for {self.key}"
+                        f"Factory parameter '{param_name}' has no type hint "
+                        f"and no default value for {self.key}"
                     )
 
             return factory(**kwargs)
@@ -210,7 +211,9 @@ class Binding:
         # Use the strategy to manage instance lifecycle
         return await self._strategy.get_async(factory_func)
 
-    async def _call_factory_with_deps_async(self, container: "Container", factory: Callable[..., Any]) -> Any:  # type: ignore
+    async def _call_factory_with_deps_async(
+        self, container: "Container", factory: Callable[..., Any]
+    ) -> Any:  # type: ignore
         """Call a factory function asynchronously, resolving its dependencies from the container.
 
         Args:
@@ -227,7 +230,7 @@ class Binding:
             sig = inspect.signature(factory)
             type_hints = get_type_hints(factory)
 
-            kwargs: Dict[str, Any] = {}
+            kwargs: dict[str, Any] = {}
             for param_name, param in sig.parameters.items():
                 if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
                     continue
@@ -239,11 +242,13 @@ class Binding:
                     except DependencyNotFoundError:
                         if param.default is inspect.Parameter.empty:
                             raise ResolutionError(
-                                f"Cannot resolve factory parameter '{param_name}' of type {param_type} for {self.key}"
+                                f"Cannot resolve factory parameter '{param_name}' "
+                                f"of type {param_type} for {self.key}"
                             )
                 elif param.default is inspect.Parameter.empty:
                     raise ResolutionError(
-                        f"Factory parameter '{param_name}' has no type hint and no default value for {self.key}"
+                        f"Factory parameter '{param_name}' has no type hint "
+                        f"and no default value for {self.key}"
                     )
 
             result = factory(**kwargs)
@@ -276,10 +281,10 @@ class Container:
             name: Name for this container (used in error messages)
         """
         self._name = name
-        self._bindings: Dict[DependencyKey, Binding] = {}
-        self._modules: List[ModuleProtocol] = []  # List of registered modules
+        self._bindings: dict[DependencyKey, Binding] = {}
+        self._modules: list[ModuleProtocol] = []  # List of registered modules
         self._parent = parent
-        self._resolution_stack: List[Type[Any]] = []
+        self._resolution_stack: list[type[Any]] = []
 
     @property
     def name(self) -> str:
@@ -293,11 +298,11 @@ class Container:
 
     def register[T](
         self,
-        interface: Type[T],
-        implementation: Optional[Type[T]] = None,
-        factory: Optional[Factory[T]] = None,
+        interface: type[T],
+        implementation: type[T] | None = None,
+        factory: Factory[T] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
-        instance: Optional[T] = None,
+        instance: T | None = None,
     ) -> "Container":
         """Register a dependency in the container.
 
@@ -329,7 +334,7 @@ class Container:
         return self
 
     def register_factory[T](
-        self, interface: Type[T], factory: Factory[T], scope: Scopes = Scopes.TRANSIENT
+        self, interface: type[T], factory: Factory[T], scope: Scopes = Scopes.TRANSIENT
     ) -> "Container":
         """Register a factory function for a dependency.
 
@@ -343,7 +348,7 @@ class Container:
         """
         return self.register(interface, factory=factory, scope=scope)
 
-    def register_instance[T](self, interface: Type[T], instance: T) -> "Container":
+    def register_instance[T](self, interface: type[T], instance: T) -> "Container":
         """Register a pre-created instance.
 
         Args:
@@ -379,7 +384,7 @@ class Container:
         self._modules.append(module)
         return self
 
-    def get[T](self, interface: Type[T]) -> T:
+    def get[T](self, interface: type[T]) -> T:
         """Resolve a dependency from the container.
 
         Resolution order:
@@ -435,7 +440,7 @@ class Container:
             # Remove from resolution stack
             self._resolution_stack.pop()
 
-    def try_get[T](self, interface: Type[T]) -> Optional[T]:
+    def try_get[T](self, interface: type[T]) -> T | None:
         """Try to resolve a dependency, returning None if not found.
 
         Args:
@@ -449,7 +454,7 @@ class Container:
         except DependencyNotFoundError:
             return None
 
-    async def get_async[T](self, interface: Type[T]) -> T:
+    async def get_async[T](self, interface: type[T]) -> T:
         """Resolve a dependency from the container asynchronously.
 
         This method supports async factories and async scopes. It follows the same
@@ -505,7 +510,7 @@ class Container:
             # Remove from resolution stack
             self._resolution_stack.pop()
 
-    def has(self, interface: Type[Any]) -> bool:
+    def has(self, interface: type[Any]) -> bool:
         """Check if a dependency is registered.
 
         Args:
@@ -701,7 +706,7 @@ class Container:
                 raise
             raise ResolutionError(f"Failed to run function '{func.__name__}': {e}")
 
-    def _create_instance[T](self, cls: Type[T]) -> T:
+    def _create_instance[T](self, cls: type[T]) -> T:
         """Create an instance of a class, resolving its dependencies.
 
         Args:
@@ -731,7 +736,7 @@ class Container:
             sig = inspect.signature(init_method)
 
             # Resolve dependencies
-            kwargs: Dict[str, Any] = {}
+            kwargs: dict[str, Any] = {}
             for param_name, param in sig.parameters.items():
                 if param_name == "self":
                     continue
@@ -768,7 +773,7 @@ class Container:
                 raise
             raise ResolutionError(f"Failed to create instance of {cls.__name__}: {e}")
 
-    async def _create_instance_async[T](self, cls: Type[T]) -> T:
+    async def _create_instance_async[T](self, cls: type[T]) -> T:
         """Create an instance of a class asynchronously, resolving its dependencies.
 
         Args:
@@ -798,7 +803,7 @@ class Container:
             sig = inspect.signature(init_method)
 
             # Resolve dependencies asynchronously
-            kwargs: Dict[str, Any] = {}
+            kwargs: dict[str, Any] = {}
             for param_name, param in sig.parameters.items():
                 if param_name == "self":
                     continue
@@ -835,7 +840,7 @@ class Container:
                 raise
             raise ResolutionError(f"Failed to create instance of {cls.__name__}: {e}")
 
-    def create_child(self, name: Optional[str] = None) -> "Container":
+    def create_child(self, name: str | None = None) -> "Container":
         """Create a child container.
 
         Args:
@@ -853,7 +858,7 @@ class Container:
         Raises:
             ValidationError: If validation fails
         """
-        errors: List[str] = []
+        errors: list[str] = []
 
         for key, binding in self._bindings.items():
             # Skip validation for instances and factories
@@ -882,16 +887,23 @@ class Container:
                             continue
 
                         # Skip *args and **kwargs
-                        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                        if param.kind in (
+                            inspect.Parameter.VAR_POSITIONAL,
+                            inspect.Parameter.VAR_KEYWORD,
+                        ):
                             continue
 
                         param_type = type_hints.get(param_name)
 
                         if param_type is not None:
-                            # Check if dependency is registered (check all dependencies, not just public)
+                            # Check if dependency is registered
                             has_dependency = (
                                 param_type in self._bindings
-                                or any(param_type in m._bindings for m in self._modules if hasattr(m, '_bindings'))
+                                or any(
+                                    param_type in m._bindings
+                                    for m in self._modules
+                                    if hasattr(m, "_bindings")
+                                )
                                 or (self._parent is not None and self._parent.has(param_type))
                             )
                             if not has_dependency:

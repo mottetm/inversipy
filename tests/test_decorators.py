@@ -1,8 +1,10 @@
 """Tests for dependency injection utilities."""
 
-import pytest
 from typing import Annotated
-from inversipy import Container, Scopes, Inject, Injectable
+
+import pytest
+
+from inversipy import Container, Inject, Injectable
 
 
 class SimpleService:
@@ -108,6 +110,7 @@ class TestContainerRun:
     async def test_run_with_async_function_returns_coroutine(self) -> None:
         """Test that container.run() returns coroutine for async functions."""
         import asyncio
+
         container = Container()
         container.register(SimpleService)
 
@@ -125,6 +128,7 @@ class TestContainerRun:
     async def test_run_async_with_async_function_returns_coroutine(self) -> None:
         """Test that container.run_async() returns coroutine for async functions."""
         import asyncio
+
         container = Container()
         container.register(SimpleService)
 
@@ -265,16 +269,17 @@ class TestInjectable:
 
         # Check signature
         import inspect
+
         sig = inspect.signature(UserService.__init__)
         params = list(sig.parameters.keys())
 
-        assert 'self' in params
-        assert 'simple' in params
+        assert "self" in params
+        assert "simple" in params
         assert len(params) == 2  # self + simple
 
         # Check type annotations
-        assert UserService.__init__.__annotations__['simple'] == SimpleService
-        assert UserService.__init__.__annotations__['return'] is None
+        assert UserService.__init__.__annotations__["simple"] == SimpleService
+        assert UserService.__init__.__annotations__["return"] is None
 
 
 class TestContainerInjectionBlocked:
@@ -282,7 +287,7 @@ class TestContainerInjectionBlocked:
 
     def test_container_injection_not_allowed(self) -> None:
         """Test that services cannot request Container as dependency."""
-        from inversipy import Container, ResolutionError, DependencyNotFoundError
+        from inversipy import Container, DependencyNotFoundError, ResolutionError
 
         container = Container()
 
