@@ -3,12 +3,7 @@
 import asyncio
 import inspect
 from collections.abc import Callable
-from typing import (
-    Any,
-    Optional,
-    cast,
-    get_type_hints,
-)
+from typing import Any, Optional, get_type_hints
 
 from .binding_strategies import (
     AsyncRequestStrategy,
@@ -99,7 +94,7 @@ class Binding:
         else:
             raise RegistrationError(f"Unknown scope: {scope}")
 
-    def create_instance(self, container: "Container") -> Any:  # type: ignore
+    def create_instance(self, container: "Container") -> Any:
         """Create an instance of the dependency (sync context).
 
         Args:
@@ -119,22 +114,28 @@ class Binding:
         if self.factory is not None:
             if self._factory_has_params:
                 # Factory has parameters - resolve them from container
-                def factory_func():
-                    return self._call_factory_with_deps(container, self.factory)  # type: ignore
+                factory = self.factory  # Capture for closure
+
+                def factory_func() -> Any:
+                    return self._call_factory_with_deps(container, factory)
+
             else:
                 # Factory has no parameters - call directly
                 factory_func = self.factory
         elif self.implementation is not None:
             # Create a factory from the implementation type
-            def factory_func():
-                return container._create_instance(self.implementation)  # type: ignore
+            implementation = self.implementation  # Capture for closure
+
+            def factory_func() -> Any:
+                return container._create_instance(implementation)
+
         else:
             raise ResolutionError(f"Cannot create instance for {self.key}")
 
         # Use the strategy to manage instance lifecycle
         return self._strategy.get(factory_func)
 
-    def _call_factory_with_deps(self, container: "Container", factory: Callable[..., Any]) -> Any:  # type: ignore
+    def _call_factory_with_deps(self, container: "Container", factory: Callable[..., Any]) -> Any:
         """Call a factory function, resolving its dependencies from the container.
 
         Args:
@@ -178,7 +179,7 @@ class Binding:
                 raise
             raise ResolutionError(f"Failed to call factory for {self.key}: {e}")
 
-    async def create_instance_async(self, container: "Container") -> Any:  # type: ignore
+    async def create_instance_async(self, container: "Container") -> Any:
         """Create an instance of the dependency (async context).
 
         Args:
@@ -195,16 +196,22 @@ class Binding:
         if self.factory is not None:
             if self._factory_has_params:
                 # Factory has parameters - resolve them from container
-                async def factory_func():  # type: ignore
-                    return await self._call_factory_with_deps_async(container, self.factory)  # type: ignore
+                factory = self.factory  # Capture for closure
+
+                async def factory_func() -> Any:
+                    return await self._call_factory_with_deps_async(container, factory)
+
             else:
                 # Factory has no parameters - call directly
                 factory_func = self.factory
         elif self.implementation is not None:
             # Create a factory from the implementation type
             # For async, we need to call _create_instance_async
-            async def factory_func():  # type: ignore
-                return await container._create_instance_async(self.implementation)  # type: ignore
+            implementation = self.implementation  # Capture for closure
+
+            async def factory_func() -> Any:
+                return await container._create_instance_async(implementation)
+
         else:
             raise ResolutionError(f"Cannot create instance for {self.key}")
 
@@ -213,7 +220,7 @@ class Binding:
 
     async def _call_factory_with_deps_async(
         self, container: "Container", factory: Callable[..., Any]
-    ) -> Any:  # type: ignore
+    ) -> Any:
         """Call a factory function asynchronously, resolving its dependencies from the container.
 
         Args:
@@ -264,6 +271,8 @@ class Binding:
     def reset(self) -> None:
         """Reset the binding's scope state."""
         self._strategy.reset()
+
+
 class Container:
     """Dependency injection container.
 
@@ -417,7 +426,7 @@ class Container:
                     # Try to resolve from the module
                     # The module will enforce its own public/private access rules
                     instance = module.get(interface)
-                    return cast(T, instance)
+                    return instance
                 except DependencyNotFoundError:
                     # This module doesn't have it (or it's private), try next module
                     continue
@@ -435,7 +444,7 @@ class Container:
 
         try:
             instance = binding.create_instance(self)
-            return cast(T, instance)
+            return instance
         finally:
             # Remove from resolution stack
             self._resolution_stack.pop()
@@ -487,7 +496,7 @@ class Container:
                 try:
                     # Try to resolve from the module asynchronously
                     instance = await module.get_async(interface)
-                    return cast(T, instance)
+                    return instance
                 except DependencyNotFoundError:
                     # This module doesn't have it (or it's private), try next module
                     continue
@@ -505,7 +514,7 @@ class Container:
 
         try:
             instance = await binding.create_instance_async(self)
-            return cast(T, instance)
+            return instance
         finally:
             # Remove from resolution stack
             self._resolution_stack.pop()
@@ -720,7 +729,7 @@ class Container:
         """
         try:
             # Get the __init__ method
-            init_method = cls.__init__  # type: ignore
+            init_method = cls.__init__
 
             # Get type hints for the constructor
             try:
@@ -787,7 +796,7 @@ class Container:
         """
         try:
             # Get the __init__ method
-            init_method = cls.__init__  # type: ignore
+            init_method = cls.__init__
 
             # Get type hints for the constructor
             try:
@@ -870,7 +879,7 @@ class Container:
                 cls = binding.implementation
                 try:
                     # Get type hints for the constructor
-                    init_method = cls.__init__  # type: ignore
+                    init_method = cls.__init__
                     try:
                         type_hints = get_type_hints(init_method)
                     except Exception:
@@ -917,16 +926,12 @@ class Container:
                                     )
 
                 except Exception as e:
-                    errors.append(
-                        f"Failed to validate dependency '{cls.__name__}': {e}"
-                    )
+                    errors.append(f"Failed to validate dependency '{cls.__name__}': {e}")
 
         if errors:
             raise ValidationError(errors)
 
     def __repr__(self) -> str:
         """Get string representation of the container."""
-        deps = ", ".join(
-            getattr(k, "__name__", str(k)) for k in self._bindings.keys()
-        )
+        deps = ", ".join(getattr(k, "__name__", str(k)) for k in self._bindings.keys())
         return f"Container({self._name}, dependencies=[{deps}])"

@@ -206,7 +206,7 @@ class Module(Container):
 
         # Check if available from a registered module
         for module in self._modules:
-            if module.is_public(interface):
+            if hasattr(module, "is_public") and module.is_public(interface):
                 return True
 
         return False
