@@ -1,7 +1,7 @@
 """FastAPI integration for inversipy dependency injection."""
 
 import inspect
-from typing import Any, Callable, TypeVar, get_type_hints, get_args, get_origin, Annotated
+from typing import Any, Callable, get_type_hints, get_args, get_origin, Annotated
 
 from .container import Container
 from .decorators import Inject
@@ -46,10 +46,7 @@ def get_container(request: Request) -> Container:
     return request.app.state.container
 
 
-T = TypeVar('T')
-
-
-def inject(func: Callable[..., T]) -> Callable[..., T]:
+def inject[T](func: Callable[..., T]) -> Callable[..., T]:
     """Decorator for FastAPI routes that auto-injects dependencies.
     
     Transforms route handlers by:
