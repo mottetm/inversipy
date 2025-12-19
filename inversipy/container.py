@@ -861,13 +861,133 @@ class Container:
         child_name = name if name else f"{self._name}.Child"
         return Container(parent=self, name=child_name)
 
+    def _get_implementation_dependencies(self, cls: type[Any]) -> list[type[Any]]:
+        """Get the dependency types required by a class implementation.
+
+        Args:
+            cls: The class to inspect
+
+        Returns:
+            List of dependency types required by the class constructor
+        """
+        dependencies: list[type[Any]] = []
+        try:
+            init_method = cls.__init__
+            try:
+                type_hints = get_type_hints(init_method)
+            except Exception:
+                return []
+
+            type_hints.pop("return", None)
+            sig = inspect.signature(init_method)
+
+            for param_name, param in sig.parameters.items():
+                if param_name == "self":
+                    continue
+                if param.kind in (
+                    inspect.Parameter.VAR_POSITIONAL,
+                    inspect.Parameter.VAR_KEYWORD,
+                ):
+                    continue
+
+                param_type = type_hints.get(param_name)
+                if param_type is not None and param.default is inspect.Parameter.empty:
+                    dependencies.append(param_type)
+        except Exception:
+            pass
+
+        return dependencies
+
+    def _detect_cycles(self) -> list[list[type[Any]]]:
+        """Detect circular dependencies in the container.
+
+        Returns:
+            List of cycles found, where each cycle is a list of types
+        """
+        # Build dependency graph for implementations only
+        graph: dict[type[Any], list[type[Any]]] = {}
+
+        for key, binding in self._bindings.items():
+            if binding.instance is not None or binding.factory is not None:
+                continue
+            if binding.implementation is not None and isinstance(key, type):
+                deps = self._get_implementation_dependencies(binding.implementation)
+                # Only include dependencies that are registered in this container
+                registered_deps = [
+                    d for d in deps
+                    if d in self._bindings
+                    or any(
+                        d in m._bindings for m in self._modules if hasattr(m, "_bindings")
+                    )
+                ]
+                graph[key] = registered_deps
+
+        # Also check modules
+        for module in self._modules:
+            if hasattr(module, "_bindings"):
+                for key, binding in module._bindings.items():
+                    if binding.instance is not None or binding.factory is not None:
+                        continue
+                    if binding.implementation is not None and isinstance(key, type):
+                        deps = self._get_implementation_dependencies(binding.implementation)
+                        registered_deps = [
+                            d for d in deps
+                            if d in self._bindings
+                            or d in module._bindings
+                            or any(
+                                d in m._bindings
+                                for m in self._modules
+                                if hasattr(m, "_bindings")
+                            )
+                        ]
+                        graph[key] = registered_deps
+
+        # DFS to detect cycles
+        cycles: list[list[type[Any]]] = []
+        visited: set[type[Any]] = set()
+        rec_stack: set[type[Any]] = set()
+        path: list[type[Any]] = []
+
+        def dfs(node: type[Any]) -> None:
+            visited.add(node)
+            rec_stack.add(node)
+            path.append(node)
+
+            for neighbor in graph.get(node, []):
+                if neighbor not in visited:
+                    dfs(neighbor)
+                elif neighbor in rec_stack:
+                    # Found a cycle - extract it from the path
+                    cycle_start = path.index(neighbor)
+                    cycle = path[cycle_start:] + [neighbor]
+                    cycles.append(cycle)
+
+            path.pop()
+            rec_stack.remove(node)
+
+        for node in graph:
+            if node not in visited:
+                dfs(node)
+
+        return cycles
+
     def validate(self) -> None:
         """Validate that all registered dependencies can be resolved.
+
+        This checks:
+        - All required dependencies are registered
+        - No circular dependencies exist
 
         Raises:
             ValidationError: If validation fails
         """
         errors: list[str] = []
+
+        # Check for circular dependencies
+        cycles = self._detect_cycles()
+        for cycle in cycles:
+            chain_str = " -> ".join(t.__name__ for t in cycle)
+            errors.append(f"Circular dependency detected: {chain_str}")
 
         for key, binding in self._bindings.items():
             # Skip validation for instances and factories
