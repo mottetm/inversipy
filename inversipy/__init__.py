@@ -6,14 +6,16 @@ Inversipy provides a flexible dependency injection container with support for:
 - Modules with public/private dependencies
 - Parent-child container hierarchy
 - Multiple scopes (Singleton, Transient, Request, AsyncSingleton)
-- Decorator-based registration
+- Function injection via container.run()
+- Property injection via Injectable base class
+- Pure classes with no container coupling
 """
 
 from .container import Container, Binding
 from .module import Module, ModuleBuilder
 from .scopes import Scopes
 from .types import Factory, DependencyKey, ModuleProtocol
-from .decorators import injectable, singleton, transient, inject, Inject, Injectable
+from .decorators import Inject, Injectable
 from .exceptions import (
     InversipyError,
     DependencyNotFoundError,
@@ -38,11 +40,7 @@ __all__ = [
     "Factory",
     "DependencyKey",
     "ModuleProtocol",
-    # Decorators
-    "injectable",
-    "singleton",
-    "transient",
-    "inject",
+    # Dependency injection utilities
     "Inject",
     "Injectable",
     # Exceptions

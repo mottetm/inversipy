@@ -1,8 +1,8 @@
-"""Tests for decorators."""
+"""Tests for dependency injection utilities."""
 
 import pytest
 from typing import Annotated
-from inversipy import Container, Scopes, injectable, singleton, transient, inject, Inject, Injectable
+from inversipy import Container, Scopes, Inject, Injectable
 
 
 class SimpleService:
@@ -22,211 +22,97 @@ class DependentService:
         return f"dependent:{self.simple.get_value()}"
 
 
-class TestInjectableDecorator:
-    """Test @injectable decorator."""
+class TestContainerRun:
+    """Test Container.run() method for function injection."""
 
-    def test_injectable_registers_class(self) -> None:
-        """Test that @injectable registers the class."""
-        container = Container()
-
-        @injectable(container)
-        class TestService:
-            pass
-
-        assert container.has(TestService)
-        service = container.get(TestService)
-        assert isinstance(service, TestService)
-
-    def test_injectable_with_interface(self) -> None:
-        """Test @injectable with explicit interface."""
-        container = Container()
-
-        class IService:
-            pass
-
-        @injectable(container, interface=IService)
-        class TestService(IService):
-            pass
-
-        assert container.has(IService)
-        service = container.get(IService)
-        assert isinstance(service, TestService)
-
-    def test_injectable_with_scope(self) -> None:
-        """Test @injectable with scope."""
-        container = Container()
-
-        @injectable(container, scope=Scopes.SINGLETON)
-        class TestService:
-            pass
-
-        service1 = container.get(TestService)
-        service2 = container.get(TestService)
-
-        assert service1 is service2
-
-
-class TestSingletonDecorator:
-    """Test @singleton decorator."""
-
-    def test_singleton_registers_as_singleton(self) -> None:
-        """Test that @singleton registers with singleton scope."""
-        container = Container()
-
-        @singleton(container)
-        class TestService:
-            pass
-
-        service1 = container.get(TestService)
-        service2 = container.get(TestService)
-
-        assert service1 is service2
-
-
-class TestTransientDecorator:
-    """Test @transient decorator."""
-
-    def test_transient_registers_as_transient(self) -> None:
-        """Test that @transient registers with transient scope."""
-        container = Container()
-
-        @transient(container)
-        class TestService:
-            pass
-
-        service1 = container.get(TestService)
-        service2 = container.get(TestService)
-
-        assert service1 is not service2
-
-
-class TestInjectDecorator:
-    """Test @inject decorator."""
-
-    def test_inject_resolves_dependencies(self) -> None:
-        """Test that @inject resolves function dependencies."""
+    def test_run_resolves_dependencies(self) -> None:
+        """Test that container.run() resolves function dependencies."""
         container = Container()
         container.register(SimpleService)
 
-        @inject(container)
         def my_function(service: SimpleService) -> str:
             return service.get_value()
 
-        result = my_function()
+        result = container.run(my_function)
         assert result == "simple"
 
-    def test_inject_with_explicit_args(self) -> None:
-        """Test that @inject allows explicit arguments."""
+    def test_run_with_explicit_args(self) -> None:
+        """Test that container.run() allows explicit arguments."""
         container = Container()
         explicit_service = SimpleService()
 
-        @inject(container)
         def my_function(service: SimpleService) -> SimpleService:
             return service
 
-        result = my_function(service=explicit_service)
+        result = container.run(my_function, service=explicit_service)
         assert result is explicit_service
 
-    def test_inject_with_multiple_dependencies(self) -> None:
-        """Test @inject with multiple dependencies."""
+    def test_run_with_multiple_dependencies(self) -> None:
+        """Test container.run() with multiple dependencies."""
         container = Container()
         container.register(SimpleService)
         container.register(DependentService)
 
-        @inject(container)
         def my_function(simple: SimpleService, dependent: DependentService) -> str:
             return f"{simple.get_value()},{dependent.get_value()}"
 
-        result = my_function()
+        result = container.run(my_function)
         assert result == "simple,dependent:simple"
 
-
-class TestInjectDescriptor:
-    """Test Inject descriptor."""
-
-    def test_inject_descriptor(self) -> None:
-        """Test Inject descriptor for property injection."""
+    def test_run_with_mixed_args(self) -> None:
+        """Test container.run() with both injected and provided args."""
         container = Container()
         container.register(SimpleService)
 
-        class MyClass:
-            service = Inject(SimpleService)
+        def my_function(service: SimpleService, multiplier: int) -> str:
+            return service.get_value() * multiplier
 
-            def __init__(self, container: Container) -> None:
-                self._container = container
+        result = container.run(my_function, multiplier=2)
+        assert result == "simplesimple"
 
-            def get_value(self) -> str:
-                return self.service.get_value()
-
-        obj = MyClass(container)
-        assert obj.get_value() == "simple"
-
-    def test_inject_descriptor_caches_value(self) -> None:
-        """Test that Inject descriptor caches the injected value."""
+    def test_run_with_default_args(self) -> None:
+        """Test container.run() with default argument values."""
         container = Container()
         container.register(SimpleService)
 
-        class MyClass:
-            service = Inject(SimpleService)
+        def my_function(service: SimpleService, suffix: str = "_default") -> str:
+            return service.get_value() + suffix
 
-            def __init__(self, container: Container) -> None:
-                self._container = container
+        result = container.run(my_function)
+        assert result == "simple_default"
 
-        obj = MyClass(container)
-        service1 = obj.service
-        service2 = obj.service
+        result = container.run(my_function, suffix="_custom")
+        assert result == "simple_custom"
 
-        # Should be the same instance because it's cached
-        assert service1 is service2
-
-    def test_inject_descriptor_without_container_raises(self) -> None:
-        """Test that Inject descriptor raises without _container attribute."""
-
-        class MyClass:
-            service = Inject(SimpleService)
-
-        obj = MyClass()
-
-        with pytest.raises(AttributeError):
-            _ = obj.service
-
-    def test_inject_descriptor_accessed_on_class(self) -> None:
-        """Test that Inject descriptor returns self when accessed on class."""
-
-        class MyClass:
-            service = Inject(SimpleService)
-
-        # Accessing descriptor on class (not instance) should return descriptor
-        descriptor = MyClass.service
-        assert isinstance(descriptor, Inject)
-
-    def test_inject_decorator_with_exception_in_type_hints(self) -> None:
-        """Test inject decorator handles exceptions when getting type hints."""
+    def test_run_without_type_hints_raises(self) -> None:
+        """Test that container.run() raises for params without type hints and defaults."""
         container = Container()
-        container.register(SimpleService)
 
-        # Create a function that will cause issues with get_type_hints
-        # This can happen with complex forward references or import issues
-        def problematic_function(service=None):  # No type hint but has default
-            return "called"
+        def my_function(service) -> str:  # No type hint, no default
+            return "test"
 
-        decorated = inject(container)(problematic_function)
-        result = decorated()
-        assert result == "called"
+        with pytest.raises(Exception):  # ResolutionError
+            container.run(my_function)
 
-    def test_inject_decorator_with_resolution_failure(self) -> None:
-        """Test inject decorator handles dependency resolution failures gracefully."""
+    def test_run_with_missing_dependency_raises(self) -> None:
+        """Test that container.run() raises when dependency is not registered."""
         container = Container()
         # Don't register SimpleService
 
-        @inject(container)
         def my_function(service: SimpleService) -> str:
             return service.get_value()
 
-        # Should not raise during decoration, only during call
-        # And since SimpleService is required but not registered, function gets called without it
-        with pytest.raises(TypeError):  # Missing required positional argument
-            my_function()
+        with pytest.raises(Exception):  # DependencyNotFoundError or ResolutionError
+            container.run(my_function)
+
+
+class TestInject:
+    """Test Inject marker class."""
+
+    def test_inject_is_marker_class(self) -> None:
+        """Test that Inject is a marker class."""
+        assert Inject is not None
+        # It's just a marker, nothing to instantiate
 
 
 class TestInjectable:
@@ -335,11 +221,11 @@ class TestInjectable:
         import inspect
         sig = inspect.signature(UserService.__init__)
         params = list(sig.parameters.keys())
-        
+
         assert 'self' in params
         assert 'simple' in params
         assert len(params) == 2  # self + simple
-        
+
         # Check type annotations
         assert UserService.__init__.__annotations__['simple'] == SimpleService
         assert UserService.__init__.__annotations__['return'] is None

@@ -176,14 +176,16 @@ class TestExampleBehavior:
             container.get(DatabaseConnection)
 
     def test_decorators_registration(self) -> None:
-        """Test decorator-based registration."""
-        from inversipy import Container, singleton
+        """Test pure registration without decorators."""
+        from inversipy import Container, Scopes
 
         container = Container()
 
-        @singleton(container)
         class TestService:
             pass
+
+        # Pure registration - no decorators
+        container.register(TestService, scope=Scopes.SINGLETON)
 
         # Should be registered
         assert container.has(TestService)
@@ -195,14 +197,16 @@ class TestExampleBehavior:
     def test_decorators_injectable(self) -> None:
         """Test Injectable base class."""
         from typing import Annotated
-        from inversipy import Container, Inject, Injectable, singleton
+        from inversipy import Container, Inject, Injectable, Scopes
 
         container = Container()
 
-        @singleton(container)
         class Logger:
             def log(self, msg: str) -> None:
                 pass
+
+        # Pure registration - no decorators
+        container.register(Logger, scope=Scopes.SINGLETON)
 
         class Service(Injectable):
             logger: Annotated[Logger, Inject]

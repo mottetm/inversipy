@@ -528,6 +528,160 @@ class Container:
 
         return False
 
+    def run[T](self, func: Callable[..., T], **provided_kwargs: Any) -> T:
+        """Run a function with dependency injection.
+
+        The function parameters are resolved from the container based on their type hints.
+        Any parameters provided in provided_kwargs are used directly instead of being resolved.
+
+        Args:
+            func: Function to run with dependency injection
+            **provided_kwargs: Explicit parameter values (not resolved from container)
+
+        Returns:
+            The function's return value
+
+        Raises:
+            ResolutionError: If dependencies cannot be resolved
+
+        Example:
+            ```python
+            def process_users(db: Database, logger: Logger) -> list:
+                logger.info("Processing users")
+                return db.query("SELECT * FROM users")
+
+            result = container.run(process_users)
+            ```
+        """
+        try:
+            # Get type hints for the function
+            try:
+                type_hints = get_type_hints(func)
+            except Exception:
+                type_hints = {}
+
+            type_hints.pop("return", None)
+
+            # Get function signature
+            sig = inspect.signature(func)
+
+            # Resolve dependencies for parameters not provided
+            resolved_kwargs = provided_kwargs.copy()
+
+            for param_name, param in sig.parameters.items():
+                # Skip if already provided
+                if param_name in provided_kwargs:
+                    continue
+
+                # Skip *args and **kwargs
+                if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                    continue
+
+                # Get the type hint
+                param_type = type_hints.get(param_name)
+
+                if param_type is not None:
+                    try:
+                        resolved_kwargs[param_name] = self.get(param_type)
+                    except DependencyNotFoundError:
+                        # If resolution fails and no default, let the error propagate
+                        if param.default is inspect.Parameter.empty:
+                            raise ResolutionError(
+                                f"Cannot resolve parameter '{param_name}' of type "
+                                f"'{param_type}' for function '{func.__name__}'"
+                            )
+                elif param.default is inspect.Parameter.empty:
+                    raise ResolutionError(
+                        f"Parameter '{param_name}' of function '{func.__name__}' "
+                        f"has no type annotation and no default value"
+                    )
+
+            return func(**resolved_kwargs)
+
+        except Exception as e:
+            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
+                raise
+            raise ResolutionError(f"Failed to run function '{func.__name__}': {e}")
+
+    async def run_async[T](self, func: Callable[..., T], **provided_kwargs: Any) -> T:
+        """Run a function with dependency injection asynchronously.
+
+        The function parameters are resolved from the container based on their type hints.
+        Any parameters provided in provided_kwargs are used directly instead of being resolved.
+
+        Args:
+            func: Function to run with dependency injection (can be sync or async)
+            **provided_kwargs: Explicit parameter values (not resolved from container)
+
+        Returns:
+            The function's return value
+
+        Raises:
+            ResolutionError: If dependencies cannot be resolved
+
+        Example:
+            ```python
+            async def process_users(db: Database, logger: Logger) -> list:
+                await logger.info("Processing users")
+                return await db.query("SELECT * FROM users")
+
+            result = await container.run_async(process_users)
+            ```
+        """
+        try:
+            # Get type hints for the function
+            try:
+                type_hints = get_type_hints(func)
+            except Exception:
+                type_hints = {}
+
+            type_hints.pop("return", None)
+
+            # Get function signature
+            sig = inspect.signature(func)
+
+            # Resolve dependencies for parameters not provided
+            resolved_kwargs = provided_kwargs.copy()
+
+            for param_name, param in sig.parameters.items():
+                # Skip if already provided
+                if param_name in provided_kwargs:
+                    continue
+
+                # Skip *args and **kwargs
+                if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                    continue
+
+                # Get the type hint
+                param_type = type_hints.get(param_name)
+
+                if param_type is not None:
+                    try:
+                        resolved_kwargs[param_name] = await self.get_async(param_type)
+                    except DependencyNotFoundError:
+                        # If resolution fails and no default, let the error propagate
+                        if param.default is inspect.Parameter.empty:
+                            raise ResolutionError(
+                                f"Cannot resolve parameter '{param_name}' of type "
+                                f"'{param_type}' for function '{func.__name__}'"
+                            )
+                elif param.default is inspect.Parameter.empty:
+                    raise ResolutionError(
+                        f"Parameter '{param_name}' of function '{func.__name__}' "
+                        f"has no type annotation and no default value"
+                    )
+
+            result = func(**resolved_kwargs)
+            # If function is async, await the result
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
+
+        except Exception as e:
+            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
+                raise
+            raise ResolutionError(f"Failed to run function '{func.__name__}': {e}")
+
     def _create_instance[T](self, cls: Type[T]) -> T:
         """Create an instance of a class, resolving its dependencies.
 
