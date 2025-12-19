@@ -39,7 +39,7 @@ Homepage = "https://github.com/mottetm/inversipy"
 Repository = "https://github.com/mottetm/inversipy"
 
 [tool.setuptools]
-packages = ["inversipy"]
+packages = ["inversipy", "examples"]
 
 [tool.black]
 line-length = 100
