@@ -9,9 +9,11 @@ A powerful and type-safe dependency injection/IoC (Inversion of Control) library
 - **Module system** - Organize dependencies with public/private access control
 - **Parent-child container hierarchy** - Create child containers that inherit from parent
 - **Multiple scopes** - Singleton, Transient, Request, and AsyncSingleton scopes
-- **Decorator support** - Convenient decorators for registration and injection
+- **Function injection** - Run functions with automatic dependency injection via `container.run()`
+- **Property injection** - Injectable base class for clean, declarative dependency injection
 - **Async support** - First-class support for async dependencies
 - **Type-safe** - Full type hint support for better IDE integration
+- **Pure classes** - No container coupling - classes remain framework-agnostic
 
 ## Installation
 
@@ -306,34 +308,40 @@ except ValidationError as e:
         print(f"  - {error}")
 ```
 
-### Decorators
+### Function Injection with Container.run()
 
-Use decorators for convenient registration:
+Run functions with automatic dependency injection using `container.run()`:
 
 ```python
-from inversipy import Container, singleton, transient, inject
+from inversipy import Container, Scopes
 
 container = Container()
 
-# Register as singleton
-@singleton(container)
+# Pure classes - no decorator coupling
 class Database:
     def query(self, sql: str) -> list:
         return []
 
-# Register as transient
-@transient(container)
 class RequestHandler:
     def __init__(self, db: Database) -> None:
         self.db = db
 
-# Inject dependencies into functions
-@inject(container)
+# Register with pure registration
+container.register(Database, scope=Scopes.SINGLETON)
+container.register(RequestHandler)
+
+# Pure function - no decorators
 def handle_request(handler: RequestHandler) -> dict:
     return {"status": "ok"}
 
-result = handle_request()  # Dependencies automatically injected
+# Use container.run() to inject dependencies
+result = container.run(handle_request)  # Dependencies automatically resolved
+
+# Can also provide some arguments explicitly
+result = container.run(handle_request, custom_arg="value")
 ```
+
+### Property Injection with Injectable
 
 Property injection using `Injectable` base class:
 
@@ -354,16 +362,23 @@ class UserService(Injectable):
         return self.database.query("SELECT * FROM users")
 
 container.register(UserService)
-service = container.get(UserService)  # Container auto-injected!
+service = container.get(UserService)  # Dependencies auto-injected!
 users = service.get_users()
 ```
 
 The `Injectable` base class automatically:
 - Scans for `Annotated[Type, Inject]` properties
-- Generates a constructor that accepts `container: Container`
-- Sets up dependency injection for all marked properties
+- Generates a constructor that accepts these dependencies as parameters
+- Keeps classes pure - they can be instantiated manually or via container
 
-No need to manually store `_container` or call `super().__init__()`!
+Classes using `Injectable` remain container-agnostic and can be used standalone:
+
+```python
+# Manual instantiation - class is pure
+my_db = Database()
+my_logger = Logger()
+service = UserService(database=my_db, logger=my_logger)
+```
 
 ## Advanced Usage
 

@@ -1,197 +1,35 @@
-"""Decorators for dependency injection."""
+"""Dependency injection utilities.
+
+This module provides utilities for dependency injection without coupling
+implementations to the container.
+"""
 
 import inspect
 from typing import Any, Callable, Optional, Type, get_type_hints, get_args, get_origin, Annotated
 
-from .container import Container
-from .scopes import Scopes
 
+class Inject:
+    """Marker for annotated property injection.
 
-def injectable[T](
-    container: Container,
-    interface: Optional[Type[Any]] = None,
-    scope: Scopes = Scopes.TRANSIENT,
-) -> Callable[[Type[T]], Type[T]]:
-    """Decorator to mark a class as injectable and register it in a container.
-
-    Args:
-        container: Container to register the class in
-        interface: Optional interface type to bind to (defaults to the class itself)
-        scope: Scope for the dependency lifecycle
-
-    Returns:
-        Decorator function
+    Use with typing.Annotated to mark properties that should be injected:
 
     Example:
         ```python
-        @injectable(container, scope=Scopes.SINGLETON)
-        class MyService:
-            pass
+        from typing import Annotated
+
+        class UserService(Injectable):
+            database: Annotated[Database, Inject]
+            logger: Annotated[Logger, Inject]
+
+            def get_users(self):
+                return self.database.query("SELECT * FROM users")
+
+        container.register(UserService)
+        service = container.get(UserService)
         ```
     """
 
-    def decorator(cls: Type[T]) -> Type[T]:
-        target = interface if interface is not None else cls
-        container.register(target, implementation=cls, scope=scope)
-        return cls
-
-    return decorator
-
-
-def singleton[T](
-    container: Container, interface: Optional[Type[Any]] = None
-) -> Callable[[Type[T]], Type[T]]:
-    """Decorator to register a class as a singleton.
-
-    Args:
-        container: Container to register the class in
-        interface: Optional interface type to bind to
-
-    Returns:
-        Decorator function
-
-    Example:
-        ```python
-        @singleton(container)
-        class MyService:
-            pass
-        ```
-    """
-    return injectable(container, interface, Scopes.SINGLETON)
-
-
-def transient[T](
-    container: Container, interface: Optional[Type[Any]] = None
-) -> Callable[[Type[T]], Type[T]]:
-    """Decorator to register a class as transient (new instance each time).
-
-    Args:
-        container: Container to register the class in
-        interface: Optional interface type to bind to
-
-    Returns:
-        Decorator function
-
-    Example:
-        ```python
-        @transient(container)
-        class MyService:
-            pass
-        ```
-    """
-    return injectable(container, interface, Scopes.TRANSIENT)
-
-
-def inject[T](container: Container) -> Callable[[Callable[..., T]], Callable[..., T]]:
-    """Decorator to inject dependencies into a function.
-
-    Args:
-        container: Container to resolve dependencies from
-
-    Returns:
-        Decorator function
-
-    Example:
-        ```python
-        @inject(container)
-        def my_function(service: MyService):
-            return service.do_something()
-        ```
-    """
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
-        def wrapper(*args: Any, **kwargs: Any) -> T:
-            # Get type hints for the function
-            try:
-                type_hints = get_type_hints(func)
-            except Exception:
-                type_hints = {}
-
-            type_hints.pop("return", None)
-
-            # Get function signature
-            sig = inspect.signature(func)
-
-            # Resolve dependencies for parameters not provided
-            resolved_kwargs = kwargs.copy()
-
-            for param_name, param in sig.parameters.items():
-                # Skip if already provided
-                if param_name in kwargs or param_name in [
-                    "self",
-                    "cls",
-                ]:
-                    continue
-
-                # Get the type hint
-                param_type = type_hints.get(param_name)
-
-                if param_type is not None:
-                    try:
-                        resolved_kwargs[param_name] = container.get(param_type)
-                    except Exception:
-                        # If resolution fails and no default, let function handle it
-                        if param.default is inspect.Parameter.empty:
-                            pass
-
-            return func(*args, **resolved_kwargs)
-
-        return wrapper
-
-    return decorator
-
-
-class Inject[T]:
-    """Descriptor for property-based dependency injection.
-
-    Example:
-        ```python
-        class MyClass:
-            service = Inject(MyService)
-
-            def __init__(self, container: Container):
-                self._container = container
-
-            def do_something(self):
-                return self.service.do_something()
-        ```
-    """
-
-    def __init__(self, dependency_type: Type[T]) -> None:
-        """Initialize the inject descriptor.
-
-        Args:
-            dependency_type: Type of dependency to inject
-        """
-        self.dependency_type = dependency_type
-        self.attr_name = f"_injected_{id(self)}"
-
-    def __get__(self, obj: Any, objtype: Optional[Type[Any]] = None) -> T:
-        """Get the injected dependency.
-
-        Args:
-            obj: Instance to get the dependency for
-            objtype: Type of the instance
-
-        Returns:
-            The injected dependency
-        """
-        if obj is None:
-            return self  # type: ignore
-
-        # Check if already cached
-        if not hasattr(obj, self.attr_name):
-            # Get container from object
-            if not hasattr(obj, "_container"):
-                raise AttributeError(
-                    f"{obj.__class__.__name__} must have a '_container' attribute "
-                    "to use Inject descriptor"
-                )
-            container = getattr(obj, "_container")
-            # Resolve and cache
-            value = container.get(self.dependency_type)
-            setattr(obj, self.attr_name, value)
-
-        return getattr(obj, self.attr_name)
+    pass
 
 
 class Injectable:
@@ -200,6 +38,9 @@ class Injectable:
     Services that inherit from Injectable can use Annotated[Type, Inject] to declare
     dependencies as class attributes. The Injectable base class automatically generates
     a constructor that accepts these dependencies as parameters.
+
+    This pattern keeps your classes decoupled from the container - they remain pure
+    and can be instantiated manually or via the container.
 
     Example:
         ```python
@@ -210,14 +51,13 @@ class Injectable:
             def get_users(self):
                 return self.database.query("SELECT * FROM users")
 
+        # Container resolves dependencies and passes them to __init__
         container.register(Database)
         container.register(Logger)
         container.register(UserService)
-
-        # Container resolves dependencies and passes them to __init__
         service = container.get(UserService)
 
-        # Can also instantiate manually
+        # Can also instantiate manually - class remains pure
         service = UserService(database=my_db, logger=my_logger)
         ```
     """
@@ -225,18 +65,18 @@ class Injectable:
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Called when a class inherits from Injectable.
 
-        Scans for Annotated[Type, Inject()] attributes and generates __init__.
+        Scans for Annotated[Type, Inject] attributes and generates __init__.
         """
         super().__init_subclass__(**kwargs)
 
-        # Scan class annotations for Inject() markers
+        # Scan class annotations for Inject markers
         inject_fields: dict[str, Type[Any]] = {}
 
         # Get annotations from the class (not inherited)
         annotations = getattr(cls, '__annotations__', {})
 
         for attr_name, annotation in annotations.items():
-            # Check if this is Annotated[Type, Inject()]
+            # Check if this is Annotated[Type, Inject]
             origin = get_origin(annotation)
             if origin is Annotated:
                 args = get_args(annotation)
@@ -251,8 +91,6 @@ class Injectable:
                             inspect.isclass(meta) and issubclass(meta, Inject)
                         ):
                             inject_fields[attr_name] = actual_type
-                            # Note: We don't create descriptors anymore
-                            # Dependencies are passed as constructor parameters
                             break
 
         # Store inject fields metadata on the class
@@ -265,10 +103,6 @@ class Injectable:
             original_init = cls.__init__ if has_custom_init else None
 
             # Create function that accepts dependency parameters
-            # Build parameter list and annotations
-            import types
-
-            # Create the __init__ function dynamically
             param_names = list(inject_fields.keys())
             param_types = list(inject_fields.values())
 
