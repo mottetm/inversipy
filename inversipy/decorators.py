@@ -4,33 +4,40 @@ This module provides utilities for dependency injection without coupling
 implementations to the container.
 """
 
-import inspect
 from collections.abc import Callable
-from typing import Annotated, Any, get_args, get_origin
+from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
 
-class Inject:
-    """Marker for annotated property injection.
-
-    Use with typing.Annotated to mark properties that should be injected:
-
-    Example:
-        ```python
-        from typing import Annotated
-
-        class UserService(Injectable):
-            database: Annotated[Database, Inject]
-            logger: Annotated[Logger, Inject]
-
-            def get_users(self):
-                return self.database.query("SELECT * FROM users")
-
-        container.register(UserService)
-        service = container.get(UserService)
-        ```
-    """
+class _InjectMarker:
+    """Internal marker class for dependency injection."""
 
     pass
+
+
+# Singleton marker instance
+_inject_marker = _InjectMarker()
+
+
+type Inject[T] = Annotated[T, _inject_marker]
+"""Type alias for dependency injection.
+
+Use Inject[T] to mark class attributes or function parameters for injection.
+
+Example:
+    ```python
+    from inversipy import Injectable, Inject
+
+    class UserService(Injectable):
+        database: Inject[Database]
+        logger: Inject[Logger]
+
+        def get_users(self):
+            return self.database.query("SELECT * FROM users")
+
+    container.register(UserService)
+    service = container.get(UserService)
+    ```
+"""
 
 
 class Injectable:
@@ -73,26 +80,34 @@ class Injectable:
         # Scan class annotations for Inject markers
         inject_fields: dict[str, type[Any]] = {}
 
-        # Get annotations from the class (not inherited)
-        annotations = getattr(cls, "__annotations__", {})
+        # Get type hints from the class to resolve type aliases
+        # Use include_extras=True to preserve Annotated metadata
+        try:
+            annotations = get_type_hints(cls, include_extras=True)
+        except Exception:
+            # Fallback to raw annotations if get_type_hints fails
+            annotations = getattr(cls, "__annotations__", {})
 
         for attr_name, annotation in annotations.items():
-            # Check if this is Annotated[Type, Inject]
             origin = get_origin(annotation)
-            if origin is Annotated:
+
+            # Check if this uses the Inject[T] type alias
+            if origin is Inject:
+                # Inject[T] expands to the type parameter
+                args = get_args(annotation)
+                if args:
+                    inject_fields[attr_name] = args[0]
+            # Also support raw Annotated[Type, _InjectMarker] for compatibility
+            elif origin is Annotated:
                 args = get_args(annotation)
                 if len(args) >= 2:
                     # First arg is the actual type, rest are metadata
                     actual_type = args[0]
                     metadata = args[1:]
 
-                    # Check if Inject is in metadata
+                    # Check if Inject marker is in metadata
                     for meta in metadata:
-                        if (
-                            isinstance(meta, Inject)
-                            or meta is Inject
-                            or (inspect.isclass(meta) and issubclass(meta, Inject))
-                        ):
+                        if isinstance(meta, _InjectMarker):
                             inject_fields[attr_name] = actual_type
                             break
 
