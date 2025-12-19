@@ -529,28 +529,38 @@ class Container:
         return False
 
     def run[T](self, func: Callable[..., T], **provided_kwargs: Any) -> T:
-        """Run a function with dependency injection.
+        """Run a function with dependency injection using synchronous resolution.
 
-        The function parameters are resolved from the container based on their type hints.
-        Any parameters provided in provided_kwargs are used directly instead of being resolved.
+        The function parameters are resolved from the container based on their type hints
+        using synchronous get(). Any parameters provided in provided_kwargs are used
+        directly instead of being resolved.
 
         Args:
-            func: Function to run with dependency injection
+            func: Function to run with dependency injection (can be sync or async)
             **provided_kwargs: Explicit parameter values (not resolved from container)
 
         Returns:
-            The function's return value
+            The function's return value. If func is async, returns the coroutine
+            (caller must await it). If func is sync, returns the value directly.
 
         Raises:
             ResolutionError: If dependencies cannot be resolved
 
         Example:
             ```python
+            # Sync function
             def process_users(db: Database, logger: Logger) -> list:
                 logger.info("Processing users")
                 return db.query("SELECT * FROM users")
 
             result = container.run(process_users)
+
+            # Async function
+            async def process_async(db: Database) -> list:
+                return await db.query_async("SELECT * FROM users")
+
+            coro = container.run(process_async)
+            result = await coro
             ```
         """
         try:
@@ -596,6 +606,7 @@ class Container:
                         f"has no type annotation and no default value"
                     )
 
+            # Call the function and return result (could be a value or coroutine)
             return func(**resolved_kwargs)
 
         except Exception as e:
@@ -604,28 +615,39 @@ class Container:
             raise ResolutionError(f"Failed to run function '{func.__name__}': {e}")
 
     async def run_async[T](self, func: Callable[..., T], **provided_kwargs: Any) -> T:
-        """Run a function with dependency injection asynchronously.
+        """Run a function with dependency injection using asynchronous resolution.
 
-        The function parameters are resolved from the container based on their type hints.
-        Any parameters provided in provided_kwargs are used directly instead of being resolved.
+        The function parameters are resolved from the container based on their type hints
+        using asynchronous get_async(). Use this when you have async dependencies that
+        need to be awaited during resolution. Any parameters provided in provided_kwargs
+        are used directly instead of being resolved.
 
         Args:
             func: Function to run with dependency injection (can be sync or async)
             **provided_kwargs: Explicit parameter values (not resolved from container)
 
         Returns:
-            The function's return value
+            The function's return value. If func is async, returns the coroutine
+            (caller must await it). If func is sync, returns the value directly.
 
         Raises:
             ResolutionError: If dependencies cannot be resolved
 
         Example:
             ```python
-            async def process_users(db: Database, logger: Logger) -> list:
+            # Async function with async dependencies
+            async def process_users(db: AsyncDatabase, logger: Logger) -> list:
                 await logger.info("Processing users")
                 return await db.query("SELECT * FROM users")
 
-            result = await container.run_async(process_users)
+            coro = await container.run_async(process_users)
+            result = await coro
+
+            # Or for sync function with async dependencies
+            def process_sync(db: AsyncDatabase) -> str:
+                return "processed"
+
+            result = await container.run_async(process_sync)
             ```
         """
         try:
@@ -671,11 +693,8 @@ class Container:
                         f"has no type annotation and no default value"
                     )
 
-            result = func(**resolved_kwargs)
-            # If function is async, await the result
-            if asyncio.iscoroutine(result):
-                return await result
-            return result
+            # Call the function and return result (could be a value or coroutine)
+            return func(**resolved_kwargs)
 
         except Exception as e:
             if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
