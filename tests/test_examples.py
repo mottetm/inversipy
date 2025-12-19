@@ -144,10 +144,11 @@ class TestExampleBehavior:
         """Test module public/private access control."""
         from inversipy import Container, Module, Scopes
         from inversipy.exceptions import DependencyNotFoundError
-        from examples.modules_example import Database, DatabaseConnection
+        from examples.modules_example import Database, DatabaseConnection, QueryBuilder
 
         module = Module("Database")
         module.register(DatabaseConnection, scope=Scopes.SINGLETON)  # Private
+        module.register(QueryBuilder, scope=Scopes.SINGLETON)  # Private
         module.register(Database, scope=Scopes.SINGLETON, public=True)  # Public
 
         container = Container()
@@ -224,7 +225,7 @@ class TestExamplesTypeChecking:
         from examples import basic_usage
 
         # Check that main functions have return type annotations
-        assert basic_usage.main.__annotations__.get("return") is not None
+        assert "return" in basic_usage.main.__annotations__
 
         # Check that classes have typed __init__ methods
-        assert basic_usage.Database.__init__.__annotations__.get("return") is not None
+        assert "return" in basic_usage.Database.__init__.__annotations__
