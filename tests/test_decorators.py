@@ -105,6 +105,52 @@ class TestContainerRun:
         with pytest.raises(Exception):  # DependencyNotFoundError or ResolutionError
             container.run(my_function)
 
+    async def test_run_with_async_function_returns_coroutine(self) -> None:
+        """Test that container.run() returns coroutine for async functions."""
+        import asyncio
+        container = Container()
+        container.register(SimpleService)
+
+        async def async_function(service: SimpleService) -> str:
+            return service.get_value()
+
+        # run() should return the coroutine
+        result = container.run(async_function)
+        assert asyncio.iscoroutine(result)
+
+        # Caller can await it
+        final_result = await result
+        assert final_result == "simple"
+
+    async def test_run_async_with_async_function_returns_coroutine(self) -> None:
+        """Test that container.run_async() returns coroutine for async functions."""
+        import asyncio
+        container = Container()
+        container.register(SimpleService)
+
+        async def async_function(service: SimpleService) -> str:
+            return service.get_value()
+
+        # run_async() should return the coroutine (difference is it can resolve async deps)
+        result = await container.run_async(async_function)
+        assert asyncio.iscoroutine(result)
+
+        # Caller can await it
+        final_result = await result
+        assert final_result == "simple"
+
+    async def test_run_async_with_sync_function_returns_value(self) -> None:
+        """Test that container.run_async() returns value directly for sync functions."""
+        container = Container()
+        container.register(SimpleService)
+
+        def sync_function(service: SimpleService) -> str:
+            return service.get_value()
+
+        # run_async() should return the value directly for sync functions
+        result = await container.run_async(sync_function)
+        assert result == "simple"
+
 
 class TestInject:
     """Test Inject marker class."""
