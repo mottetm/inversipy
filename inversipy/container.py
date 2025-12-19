@@ -557,21 +557,6 @@ class Container:
             # Get constructor signature
             sig = inspect.signature(init_method)
 
-            # Check if this is an Injectable class by looking for container: Container parameter
-            # Injectable classes have __init__(self, container: Container)
-            if 'container' in sig.parameters and 'container' in type_hints:
-                container_type = type_hints['container']
-                # Check if it's the Container type
-                is_container_type = (
-                    container_type is Container
-                    or (isinstance(container_type, type) and issubclass(container_type, Container))
-                    or str(container_type) == "<class 'inversipy.container.Container'>"
-                    or (hasattr(container_type, '__name__') and container_type.__name__ == 'Container')
-                )
-                if is_container_type:
-                    # This is an Injectable class - pass container explicitly
-                    return cls(container=self)
-
             # Resolve dependencies
             kwargs: Dict[str, Any] = {}
             for param_name, param in sig.parameters.items():
@@ -638,21 +623,6 @@ class Container:
 
             # Get constructor signature
             sig = inspect.signature(init_method)
-
-            # Check if this is an Injectable class by looking for container: Container parameter
-            # Injectable classes have __init__(self, container: Container)
-            if 'container' in sig.parameters and 'container' in type_hints:
-                container_type = type_hints['container']
-                # Check if it's the Container type
-                is_container_type = (
-                    container_type is Container
-                    or (isinstance(container_type, type) and issubclass(container_type, Container))
-                    or str(container_type) == "<class 'inversipy.container.Container'>"
-                    or (hasattr(container_type, '__name__') and container_type.__name__ == 'Container')
-                )
-                if is_container_type:
-                    # This is an Injectable class - pass container explicitly
-                    return cls(container=self)
 
             # Resolve dependencies asynchronously
             kwargs: Dict[str, Any] = {}

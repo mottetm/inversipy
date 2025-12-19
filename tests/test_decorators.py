@@ -319,3 +319,47 @@ class TestInjectable:
 
         assert service.get_value() == "initialized:simple"
         assert service.custom_value == "initialized"
+
+    def test_injectable_constructor_signature(self) -> None:
+        """Test that Injectable generates proper constructor signature."""
+        container = Container()
+        container.register(SimpleService)
+
+        class UserService(Injectable):
+            simple: Annotated[SimpleService, Inject]
+
+            def get_value(self) -> str:
+                return f"user:{self.simple.get_value()}"
+
+        # Check signature
+        import inspect
+        sig = inspect.signature(UserService.__init__)
+        params = list(sig.parameters.keys())
+        
+        assert 'self' in params
+        assert 'simple' in params
+        assert len(params) == 2  # self + simple
+        
+        # Check type annotations
+        assert UserService.__init__.__annotations__['simple'] == SimpleService
+        assert UserService.__init__.__annotations__['return'] is None
+
+
+class TestContainerInjectionBlocked:
+    """Test that Container cannot be injected as a dependency."""
+
+    def test_container_injection_not_allowed(self) -> None:
+        """Test that services cannot request Container as dependency."""
+        from inversipy import Container, ResolutionError, DependencyNotFoundError
+
+        container = Container()
+
+        class BadService:
+            def __init__(self, container: Container):
+                self.container = container
+
+        container.register(BadService)
+
+        # Should fail - Container is not registered and shouldn't auto-inject
+        with pytest.raises((ResolutionError, DependencyNotFoundError)):
+            container.get(BadService)
