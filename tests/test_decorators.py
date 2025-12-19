@@ -268,22 +268,24 @@ class TestInjectable:
 
         assert service.get_combined() == "simple+dependent:simple"
 
-    def test_injectable_container_auto_injected(self) -> None:
-        """Test that Container is automatically injected."""
+    def test_injectable_manual_instantiation(self) -> None:
+        """Test that Injectable classes can be instantiated manually."""
         container = Container()
         container.register(SimpleService)
 
-        class ServiceWithContainer(Injectable):
+        class UserService(Injectable):
             simple: Annotated[SimpleService, Inject]
 
-            def has_container(self) -> bool:
-                return hasattr(self, '_container') and self._container is not None
+            def get_value(self) -> str:
+                return f"user:{self.simple.get_value()}"
 
-        container.register(ServiceWithContainer)
-        service = container.get(ServiceWithContainer)
+        # Manual instantiation
+        simple_instance = SimpleService()
+        service = UserService(simple=simple_instance)
 
-        assert service.has_container()
-        assert service._container is container
+        assert isinstance(service, UserService)
+        assert service.simple is simple_instance
+        assert service.get_value() == "user:simple"
 
     def test_injectable_without_annotations_works(self) -> None:
         """Test Injectable without any Inject annotations."""
