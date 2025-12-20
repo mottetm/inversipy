@@ -2,7 +2,7 @@
 
 ## Overview
 
-This plan describes how to implement **collection injection** in inversipy, enabling injection of all registered implementations of an interface as a collection.
+This plan describes how to implement **collection injection** in inversipy, enabling multiple implementations of the same interface to coexist and be injected as a collection.
 
 ## Problem Statement
 
@@ -11,9 +11,8 @@ Currently, registering the same interface multiple times overwrites previous reg
 ```python
 container.register(IPlugin, PluginA)
 container.register(IPlugin, PluginB)  # Overwrites PluginA!
-container.register(IPlugin, PluginC)  # Overwrites PluginB!
 
-plugin = container.get(IPlugin)  # Only gets PluginC
+plugin = container.get(IPlugin)  # Only gets PluginB
 ```
 
 This limitation prevents common patterns like:
@@ -25,221 +24,222 @@ This limitation prevents common patterns like:
 
 ## Design Goals
 
-1. **Non-breaking** - Existing single-registration behavior unchanged
-2. **Explicit** - Clear distinction between single and collection registration
+1. **Minimal API change** - Same `register()` method, add `get_all()`
+2. **Fail-fast** - Ambiguous single resolution fails immediately
 3. **Type-safe** - Full typing support for collections
-4. **Consistent** - Follow existing API patterns
-
----
-
-## Syntax Options
-
-### Option A: Separate `register_all` / `get_all` Methods
-
-```python
-# Registration
-container.register_all(IPlugin, PluginA)
-container.register_all(IPlugin, PluginB)
-container.register_all(IPlugin, PluginC)
-
-# Resolution
-plugins: list[IPlugin] = container.get_all(IPlugin)
-
-# Type annotation
-class PluginManager(Injectable):
-    plugins: InjectAll[IPlugin]
-```
-
-**Pros:**
-- Clear separation from single registration
-- Explicit intent
-- No ambiguity
-
-**Cons:**
-- New method to learn
-- Separate mental model
-
-### Option B: Automatic Collection via `list[T]` Type
-
-```python
-# Registration (unchanged - last wins for single)
-container.register(IPlugin, PluginA)
-container.register(IPlugin, PluginB)
-
-# Resolution via list type
-plugins: list[IPlugin] = container.get(list[IPlugin])
-
-# Type annotation
-class PluginManager(Injectable):
-    plugins: Inject[list[IPlugin]]
-```
-
-**Pros:**
-- Uses standard Python typing
-- Intuitive for users familiar with DI frameworks
-- No new methods
-
-**Cons:**
-- Magic behavior based on type
-- Ambiguous: does `list[IPlugin]` mean "all plugins" or "a registered list"?
-
-### Option C: Collection Registration with Tags
-
-```python
-# Registration with collection tag
-container.register(IPlugin, PluginA, collection="plugins")
-container.register(IPlugin, PluginB, collection="plugins")
-
-# Resolution
-plugins = container.get_collection("plugins")
-
-# Type annotation
-class PluginManager(Injectable):
-    plugins: Inject[list[IPlugin], Collection("plugins")]
-```
-
-**Pros:**
-- Explicit grouping
-- Multiple collections of same type possible
-
-**Cons:**
-- String-based, less type-safe
-- More verbose
-
-### Recommended: Option A
-
-Option A provides the clearest semantics with explicit `register_all`/`get_all` methods and `InjectAll[T]` type alias.
+4. **Consistent** - Integrates with named bindings feature
 
 ---
 
 ## Final Syntax Design
 
 ```python
-# Registration - add to collection
-container.register_all(IPlugin, PluginA)
-container.register_all(IPlugin, PluginB)
-container.register_all(IPlugin, PluginC)
+# Registration - same method, accumulates
+container.register(IPlugin, PluginA)
+container.register(IPlugin, PluginB)
+container.register(IPlugin, PluginC)
 
-# Can also use factories
-container.register_all(IPlugin, factory=create_plugin_d)
+# Single resolution - FAILS (ambiguous)
+container.get(IPlugin)  # raises AmbiguousDependencyError
 
-# Resolution
+# Collection resolution - returns all
 plugins: list[IPlugin] = container.get_all(IPlugin)
+
+# Named resolution - works (unambiguous)
+container.register(IPlugin, PluginA, name="primary")
+container.get(IPlugin, name="primary")  # Works
 
 # Property injection
 class PluginManager(Injectable):
     plugins: InjectAll[IPlugin]
-
-    def run_all(self):
-        for plugin in self.plugins:
-            plugin.execute()
-
-# Constructor injection
-class EventBus:
-    def __init__(self, handlers: list[IEventHandler]):
-        self.handlers = handlers
-
-# With InjectAll annotation
-class EventBus:
-    def __init__(self, handlers: InjectAll[IEventHandler]):
-        self.handlers = handlers
 ```
+
+### Key Behavior Changes
+
+| Scenario | Current Behavior | New Behavior |
+|----------|------------------|--------------|
+| Register same interface twice | Overwrites | Accumulates |
+| `get()` with single registration | Returns instance | Returns instance |
+| `get()` with multiple registrations | Returns last | **Raises AmbiguousDependencyError** |
+| `get()` with name | N/A | Returns named instance |
+| `get_all()` | N/A | Returns all instances |
 
 ---
 
 ## Implementation Plan
 
-### Phase 1: Core Data Structures (`container.py`)
+### Phase 1: Change Binding Storage (`container.py`)
 
-#### 1.1 Add Collection Storage
+#### 1.1 Update Storage Structure
 
+**Current:**
 ```python
-class Container:
-    def __init__(self, parent: Optional["Container"] = None, name: str = "Container") -> None:
-        self._name = name
-        self._bindings: dict[DependencyKey, Binding] = {}
-        self._collections: dict[type, list[Binding]] = {}  # NEW
-        self._modules: list[ModuleProtocol] = []
-        self._parent = parent
-        self._resolution_stack: list[type[Any]] = []
+self._bindings: dict[DependencyKey, Binding] = {}
 ```
 
-#### 1.2 Add `register_all` Method
+**New:**
+```python
+self._bindings: dict[DependencyKey, list[Binding]] = {}
+```
+
+Each key maps to a **list** of bindings, allowing multiple implementations.
+
+#### 1.2 Update `register()` to Accumulate
 
 ```python
-def register_all[T](
+def register[T](
     self,
     interface: type[T],
     implementation: type[T] | None = None,
     factory: Factory[T] | None = None,
     scope: Scopes = Scopes.TRANSIENT,
     instance: T | None = None,
+    name: str | None = None,
 ) -> "Container":
-    """Register an implementation to a collection.
+    """Register a dependency.
 
     Multiple implementations can be registered for the same interface.
-    Use get_all() to resolve all implementations.
+    Use get_all() to resolve all, or use names to disambiguate get().
 
     Args:
-        interface: The interface type for the collection
+        interface: The interface/type to register
         implementation: Optional implementation type
         factory: Optional factory function
-        scope: Scope for each instance
+        scope: Scope for the dependency lifecycle
         instance: Optional pre-created instance
+        name: Optional name for disambiguation
 
     Returns:
         Self for chaining
-
-    Example:
-        container.register_all(IPlugin, PluginA)
-        container.register_all(IPlugin, PluginB)
-        plugins = container.get_all(IPlugin)  # [PluginA(), PluginB()]
     """
+    key: DependencyKey = (interface, name) if name else interface
+
     if implementation is None and factory is None and instance is None:
         implementation = interface
 
     binding = Binding(
-        key=interface,
+        key=key,
         factory=factory,
         implementation=implementation,
         scope=scope,
         instance=instance,
     )
 
-    if interface not in self._collections:
-        self._collections[interface] = []
+    # Accumulate bindings instead of overwriting
+    if key not in self._bindings:
+        self._bindings[key] = []
+    self._bindings[key].append(binding)
 
-    self._collections[interface].append(binding)
     return self
 ```
 
-#### 1.3 Add `get_all` Method
+---
+
+### Phase 2: Add AmbiguousDependencyError (`exceptions.py`)
+
+```python
+class AmbiguousDependencyError(InversipyError):
+    """Raised when multiple implementations exist for a single get() call."""
+
+    def __init__(
+        self,
+        dependency_type: type[Any],
+        count: int,
+        container_name: str = "container",
+    ) -> None:
+        self.dependency_type = dependency_type
+        self.count = count
+        self.container_name = container_name
+        super().__init__(
+            f"Ambiguous dependency: {count} implementations of "
+            f"'{dependency_type.__name__}' registered in {container_name}. "
+            f"Use get_all() for collection injection or register with name= for disambiguation."
+        )
+```
+
+---
+
+### Phase 3: Update Resolution Methods (`container.py`)
+
+#### 3.1 Update `get()` to Fail on Ambiguity
+
+```python
+def get[T](self, interface: type[T], name: str | None = None) -> T:
+    """Resolve a single dependency.
+
+    Args:
+        interface: The type to resolve
+        name: Optional name for disambiguation
+
+    Returns:
+        Resolved instance
+
+    Raises:
+        DependencyNotFoundError: If no implementation registered
+        AmbiguousDependencyError: If multiple implementations without name
+        CircularDependencyError: If circular dependency detected
+    """
+    key: DependencyKey = (interface, name) if name else interface
+
+    # Check for circular dependencies
+    if key in self._resolution_stack:
+        self._resolution_stack.append(key)
+        raise CircularDependencyError(self._resolution_stack[:])
+
+    # Try to find bindings in this container
+    bindings = self._bindings.get(key, [])
+
+    # Check for ambiguity
+    if len(bindings) > 1:
+        raise AmbiguousDependencyError(interface, len(bindings), self._name)
+
+    if len(bindings) == 1:
+        self._resolution_stack.append(key)
+        try:
+            return bindings[0].create_instance(self)
+        finally:
+            self._resolution_stack.pop()
+
+    # Try registered modules
+    for module in self._modules:
+        try:
+            return module.get(interface)
+        except DependencyNotFoundError:
+            continue
+        except AmbiguousDependencyError:
+            raise  # Propagate ambiguity
+
+    # Try parent container
+    if self._parent is not None:
+        return self._parent.get(interface, name=name)
+
+    raise DependencyNotFoundError(interface, self._name, name)
+```
+
+#### 3.2 Add `get_all()` Method
 
 ```python
 def get_all[T](self, interface: type[T]) -> list[T]:
-    """Resolve all implementations registered for an interface.
+    """Resolve all implementations of an interface.
 
     Args:
         interface: The interface type to resolve
 
     Returns:
-        List of all registered implementations
-
-    Raises:
-        CircularDependencyError: If circular dependency detected
+        List of all registered implementations (empty if none)
 
     Example:
-        plugins = container.get_all(IPlugin)
-        for plugin in plugins:
-            plugin.execute()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        plugins = container.get_all(IPlugin)  # [PluginA(), PluginB()]
     """
     instances: list[T] = []
 
-    # Get from local collections
-    if interface in self._collections:
-        for binding in self._collections[interface]:
-            instance = binding.create_instance(self)
-            instances.append(instance)
+    # Get from local bindings (unnamed only for collections)
+    bindings = self._bindings.get(interface, [])
+    for binding in bindings:
+        instance = binding.create_instance(self)
+        instances.append(instance)
 
     # Get from registered modules
     for module in self._modules:
@@ -258,24 +258,17 @@ def get_all[T](self, interface: type[T]) -> list[T]:
     return instances
 ```
 
-#### 1.4 Add Async Variant
+#### 3.3 Add Async Variants
 
 ```python
 async def get_all_async[T](self, interface: type[T]) -> list[T]:
-    """Resolve all implementations asynchronously.
-
-    Args:
-        interface: The interface type to resolve
-
-    Returns:
-        List of all registered implementations
-    """
+    """Resolve all implementations asynchronously."""
     instances: list[T] = []
 
-    if interface in self._collections:
-        for binding in self._collections[interface]:
-            instance = await binding.create_instance_async(self)
-            instances.append(instance)
+    bindings = self._bindings.get(interface, [])
+    for binding in bindings:
+        instance = await binding.create_instance_async(self)
+        instances.append(instance)
 
     for module in self._modules:
         if hasattr(module, "get_all_async"):
@@ -292,36 +285,63 @@ async def get_all_async[T](self, interface: type[T]) -> list[T]:
     return instances
 ```
 
-#### 1.5 Add `has_all` Check
+#### 3.4 Update `has()` Method
 
 ```python
-def has_all(self, interface: type[Any]) -> bool:
-    """Check if any implementations are registered for collection injection.
+def has(self, interface: type[Any], name: str | None = None) -> bool:
+    """Check if a dependency is registered.
 
     Args:
-        interface: The interface type to check
+        interface: The type to check
+        name: Optional name qualifier
 
     Returns:
-        True if at least one implementation is registered
+        True if at least one implementation registered
     """
-    if interface in self._collections and self._collections[interface]:
+    key: DependencyKey = (interface, name) if name else interface
+
+    if key in self._bindings and self._bindings[key]:
         return True
 
     for module in self._modules:
-        if hasattr(module, "has_all") and module.has_all(interface):
+        if module.has(interface):
             return True
 
     if self._parent is not None:
-        return self._parent.has_all(interface)
+        return self._parent.has(interface, name=name)
 
     return False
 ```
 
+#### 3.5 Add `count()` Method
+
+```python
+def count(self, interface: type[Any]) -> int:
+    """Count implementations registered for an interface.
+
+    Args:
+        interface: The interface type
+
+    Returns:
+        Number of registered implementations
+    """
+    total = len(self._bindings.get(interface, []))
+
+    for module in self._modules:
+        if hasattr(module, "count"):
+            total += module.count(interface)
+
+    if self._parent is not None:
+        total += self._parent.count(interface)
+
+    return total
+```
+
 ---
 
-### Phase 2: Type Alias (`decorators.py`)
+### Phase 4: Type Alias for InjectAll (`decorators.py`)
 
-#### 2.1 Add `InjectAll` Type Alias
+#### 4.1 Add InjectAll Type Alias
 
 ```python
 class _InjectAllMarker:
@@ -333,17 +353,14 @@ _inject_all_marker = _InjectAllMarker()
 type InjectAll[T] = Annotated[list[T], _inject_all_marker]
 ```
 
-This makes:
-- `InjectAll[IPlugin]` → `Annotated[list[IPlugin], _inject_all_marker]`
-
-#### 2.2 Update `Injectable` to Handle `InjectAll`
+#### 4.2 Update Injectable to Handle InjectAll
 
 ```python
 def __init_subclass__(cls, **kwargs: Any) -> None:
     super().__init_subclass__(**kwargs)
 
     inject_fields: dict[str, tuple[type[Any], str | None]] = {}
-    inject_all_fields: dict[str, type[Any]] = {}  # NEW
+    inject_all_fields: dict[str, type[Any]] = {}
 
     annotations = get_type_hints(cls, include_extras=True)
 
@@ -355,17 +372,14 @@ def __init_subclass__(cls, **kwargs: Any) -> None:
             actual_type = args[0]
             metadata = args[1:]
 
-            # Check for InjectAll marker
             for meta in metadata:
                 if isinstance(meta, _InjectAllMarker):
-                    # actual_type is list[T], extract T
-                    list_origin = get_origin(actual_type)
-                    if list_origin is list:
+                    # Extract T from list[T]
+                    if get_origin(actual_type) is list:
                         item_type = get_args(actual_type)[0]
                         inject_all_fields[attr_name] = item_type
                     break
                 elif isinstance(meta, _InjectMarker):
-                    # Regular Inject handling
                     named_qualifier = None
                     for m in metadata:
                         if isinstance(m, Named):
@@ -374,21 +388,21 @@ def __init_subclass__(cls, **kwargs: Any) -> None:
                     break
 
     setattr(cls, "_inject_fields", inject_fields)
-    setattr(cls, "_inject_all_fields", inject_all_fields)  # NEW
+    setattr(cls, "_inject_all_fields", inject_all_fields)
 
-    # Generate __init__ that handles both
-    # ...
+    # Generate __init__ handling both types
+    _generate_init(cls, inject_fields, inject_all_fields)
 ```
 
 ---
 
-### Phase 3: Container Resolution Updates (`container.py`)
+### Phase 5: Update Instance Creation (`container.py`)
 
-#### 3.1 Update `_create_instance` for Collection Injection
+#### 5.1 Handle InjectAll in Constructor Resolution
 
 ```python
 def _create_instance[T](self, cls: type[T]) -> T:
-    # ... existing code ...
+    # ... get type_hints and sig ...
 
     kwargs: dict[str, Any] = {}
 
@@ -400,41 +414,37 @@ def _create_instance[T](self, cls: type[T]) -> T:
         if param_type is None:
             continue
 
-        # Check for InjectAll annotation
+        # Check for InjectAll[T]
         inject_all_type = self._extract_inject_all_type(param_type)
-        if inject_all_type:
+        if inject_all_type is not None:
             kwargs[param_name] = self.get_all(inject_all_type)
             continue
 
-        # Check for regular Inject annotation
+        # Check for Inject[T] or Inject[T, Named("x")]
         inject_info = self._extract_inject_info(param_type)
-        if inject_info:
+        if inject_info is not None:
             actual_type, dep_name = inject_info
             kwargs[param_name] = self.get(actual_type, name=dep_name)
             continue
 
-        # Check for list[T] type (auto-collection)
-        if self._is_list_type(param_type):
-            item_type = self._get_list_item_type(param_type)
-            if item_type and self.has_all(item_type):
-                kwargs[param_name] = self.get_all(item_type)
-                continue
-
-        # Regular resolution
+        # Regular type resolution
         try:
             kwargs[param_name] = self.get(param_type)
         except DependencyNotFoundError:
             if param.default is inspect.Parameter.empty:
                 raise
+        except AmbiguousDependencyError:
+            # Re-raise with helpful message
+            raise
 
     return cls(**kwargs)
 ```
 
-#### 3.2 Helper Methods
+#### 5.2 Helper Method
 
 ```python
 def _extract_inject_all_type(self, type_hint: Any) -> type | None:
-    """Extract the item type from InjectAll[T] annotation."""
+    """Extract item type from InjectAll[T] -> T."""
     origin = get_origin(type_hint)
 
     if origin is not Annotated:
@@ -446,181 +456,120 @@ def _extract_inject_all_type(self, type_hint: Any) -> type | None:
 
     for meta in metadata:
         if isinstance(meta, _InjectAllMarker):
-            # Extract T from list[T]
-            list_origin = get_origin(actual_type)
-            if list_origin is list:
+            if get_origin(actual_type) is list:
                 list_args = get_args(actual_type)
                 if list_args:
                     return list_args[0]
+            break
 
-    return None
-
-def _is_list_type(self, type_hint: Any) -> bool:
-    """Check if type hint is list[T]."""
-    return get_origin(type_hint) is list
-
-def _get_list_item_type(self, type_hint: Any) -> type | None:
-    """Get the item type from list[T]."""
-    if get_origin(type_hint) is list:
-        args = get_args(type_hint)
-        if args:
-            return args[0]
     return None
 ```
 
 ---
 
-### Phase 4: Module Support (`module.py`)
+### Phase 6: Module Updates (`module.py`)
 
-#### 4.1 Add Collection Methods to Module
+#### 6.1 Update Module Storage
 
 ```python
 class Module(Container):
     def __init__(self, name: str) -> None:
         super().__init__(parent=None, name=f"Module({name})")
-        self._public_keys: set[type[Any]] = set()
-        self._public_collections: set[type[Any]] = set()  # NEW
-
-    def register_all[T](
-        self,
-        interface: type[T],
-        implementation: type[T] | None = None,
-        factory: Factory[T] | None = None,
-        scope: Scopes = Scopes.TRANSIENT,
-        instance: T | None = None,
-        public: bool = False,  # Module-specific
-    ) -> "Module":
-        """Register to collection with public/private visibility."""
-        super().register_all(
-            interface=interface,
-            implementation=implementation,
-            factory=factory,
-            scope=scope,
-            instance=instance,
-        )
-
-        if public:
-            self._public_collections.add(interface)
-
-        return self
-
-    def get_all[T](self, interface: type[T]) -> list[T]:
-        """Get all implementations, respecting visibility."""
-        # External call - check if collection is public
-        if not self._resolution_stack:
-            if interface not in self._public_collections:
-                return []
-
-        return super().get_all(interface)
-
-    def has_all(self, interface: type[Any]) -> bool:
-        """Check if public collection exists."""
-        return interface in self._public_collections
-
-    def export_all(self, *interfaces: type[Any]) -> "Module":
-        """Export collection interfaces as public."""
-        for interface in interfaces:
-            if interface in self._collections:
-                self._public_collections.add(interface)
-            else:
-                raise RegistrationError(
-                    f"Cannot export collection '{interface.__name__}' - not registered"
-                )
-        return self
+        self._public_keys: set[DependencyKey] = set()
 ```
 
-#### 4.2 Update ModuleBuilder
+#### 6.2 Update Module get() for Ambiguity
 
 ```python
-class ModuleBuilder:
-    def bind_all[T](
-        self,
-        interface: type[T],
-        implementation: type[T] | None = None,
-        factory: Factory[T] | None = None,
-        scope: Scopes = Scopes.TRANSIENT,
-        instance: T | None = None,
-    ) -> "ModuleBuilder":
-        """Add to collection (private)."""
-        self._module.register_all(
-            interface=interface,
-            implementation=implementation,
-            factory=factory,
-            scope=scope,
-            instance=instance,
-            public=False,
-        )
-        return self
+def get[T](self, interface: type[T], name: str | None = None) -> T:
+    """Resolve with visibility check and ambiguity detection."""
+    key: DependencyKey = (interface, name) if name else interface
 
-    def bind_all_public[T](
-        self,
-        interface: type[T],
-        implementation: type[T] | None = None,
-        factory: Factory[T] | None = None,
-        scope: Scopes = Scopes.TRANSIENT,
-        instance: T | None = None,
-    ) -> "ModuleBuilder":
-        """Add to public collection."""
-        self._module.register_all(
-            interface=interface,
-            implementation=implementation,
-            factory=factory,
-            scope=scope,
-            instance=instance,
-            public=True,
-        )
-        return self
+    # Internal call - allow private access
+    if self._resolution_stack:
+        return super().get(interface, name=name)
 
-    def export_all(self, *interfaces: type[Any]) -> "ModuleBuilder":
-        """Export collections as public."""
-        self._module.export_all(*interfaces)
-        return self
+    # External call - check public
+    if not self.is_public(key):
+        raise DependencyNotFoundError(interface, self._name, name)
+
+    return super().get(interface, name=name)
+```
+
+#### 6.3 Add get_all() to Module
+
+```python
+def get_all[T](self, interface: type[T]) -> list[T]:
+    """Get all public implementations."""
+    # External call - only return public bindings
+    if not self._resolution_stack:
+        if not self.is_public(interface):
+            return []
+
+    return super().get_all(interface)
 ```
 
 ---
 
-### Phase 5: Validation Updates (`container.py`)
+### Phase 7: Validation Updates (`container.py`)
 
-#### 5.1 Update Validation to Check Collections
+#### 7.1 Update Validation
 
 ```python
 def validate(self) -> None:
     """Validate container configuration."""
     errors: list[str] = []
 
-    # Existing validation...
+    # Check for cycles
+    cycles = self._detect_cycles()
+    for cycle in cycles:
+        chain_str = " -> ".join(t.__name__ for t in cycle)
+        errors.append(f"Circular dependency detected: {chain_str}")
 
-    # Validate collection bindings
-    for interface, bindings in self._collections.items():
+    # Validate each binding
+    for key, bindings in self._bindings.items():
         for binding in bindings:
             if binding.implementation is not None:
                 cls = binding.implementation
-                # Check each implementation can be instantiated
-                deps = self._get_implementation_dependencies(cls)
-                for dep in deps:
-                    if not self.has(dep) and not self.has_all(dep):
-                        errors.append(
-                            f"Collection '{interface.__name__}' implementation "
-                            f"'{cls.__name__}' requires '{dep.__name__}' which is not registered"
-                        )
+                try:
+                    type_hints = get_type_hints(cls.__init__)
+                    sig = inspect.signature(cls.__init__)
 
-    # Check for InjectAll in regular bindings
-    for key, binding in self._bindings.items():
-        if binding.implementation is not None:
-            cls = binding.implementation
-            # Check if any parameter uses InjectAll
-            # and verify the collection is registered
-            try:
-                type_hints = get_type_hints(cls.__init__)
-                for param_type in type_hints.values():
-                    inject_all_type = self._extract_inject_all_type(param_type)
-                    if inject_all_type and not self.has_all(inject_all_type):
-                        errors.append(
-                            f"'{cls.__name__}' requires collection of "
-                            f"'{inject_all_type.__name__}' but none registered"
-                        )
-            except Exception:
-                pass
+                    for param_name, param in sig.parameters.items():
+                        if param_name == "self":
+                            continue
+
+                        param_type = type_hints.get(param_name)
+                        if param_type is None:
+                            continue
+
+                        # Check InjectAll
+                        inject_all_type = self._extract_inject_all_type(param_type)
+                        if inject_all_type is not None:
+                            # InjectAll is valid even if empty
+                            continue
+
+                        # Check regular dependency
+                        inject_info = self._extract_inject_info(param_type)
+                        if inject_info:
+                            actual_type, dep_name = inject_info
+                            if not self.has(actual_type, name=dep_name):
+                                if param.default is inspect.Parameter.empty:
+                                    errors.append(
+                                        f"'{cls.__name__}' requires '{actual_type.__name__}'"
+                                        + (f" (name='{dep_name}')" if dep_name else "")
+                                        + " which is not registered"
+                                    )
+                        else:
+                            if not self.has(param_type):
+                                if param.default is inspect.Parameter.empty:
+                                    errors.append(
+                                        f"'{cls.__name__}' requires '{param_type.__name__}' "
+                                        "which is not registered"
+                                    )
+
+                except Exception as e:
+                    errors.append(f"Failed to validate '{cls.__name__}': {e}")
 
     if errors:
         raise ValidationError(errors)
@@ -628,9 +577,7 @@ def validate(self) -> None:
 
 ---
 
-### Phase 6: FastAPI Integration (`fastapi.py`)
-
-#### 6.1 Update `@inject` Decorator
+### Phase 8: FastAPI Integration (`fastapi.py`)
 
 ```python
 def inject(func: Callable[P, T]) -> Callable[P, T]:
@@ -650,18 +597,17 @@ def inject(func: Callable[P, T]) -> Callable[P, T]:
             if param_type is None:
                 continue
 
-            # Check for InjectAll
+            # Check InjectAll
             inject_all_type = _extract_inject_all_type(param_type)
-            if inject_all_type:
+            if inject_all_type is not None:
                 kwargs[param_name] = await container.get_all_async(inject_all_type)
                 continue
 
-            # Check for regular Inject
+            # Check Inject with optional name
             inject_info = _extract_inject_info(param_type)
-            if inject_info:
+            if inject_info is not None:
                 actual_type, dep_name = inject_info
-                if container.has(actual_type, name=dep_name):
-                    kwargs[param_name] = await container.get_async(actual_type, name=dep_name)
+                kwargs[param_name] = await container.get_async(actual_type, name=dep_name)
 
         return await func(*args, **kwargs)
 
@@ -670,54 +616,9 @@ def inject(func: Callable[P, T]) -> Callable[P, T]:
 
 ---
 
-### Phase 7: Ordering Support (Optional Enhancement)
+### Phase 9: Documentation & Examples
 
-Allow controlling the order of collection items:
-
-```python
-def register_all[T](
-    self,
-    interface: type[T],
-    implementation: type[T] | None = None,
-    factory: Factory[T] | None = None,
-    scope: Scopes = Scopes.TRANSIENT,
-    instance: T | None = None,
-    order: int = 0,  # NEW - lower values come first
-) -> "Container":
-    """Register with optional ordering."""
-    binding = Binding(
-        key=interface,
-        factory=factory,
-        implementation=implementation,
-        scope=scope,
-        instance=instance,
-    )
-    binding.order = order  # Store order on binding
-
-    if interface not in self._collections:
-        self._collections[interface] = []
-
-    self._collections[interface].append(binding)
-    # Keep sorted by order
-    self._collections[interface].sort(key=lambda b: getattr(b, 'order', 0))
-    return self
-```
-
-Usage:
-```python
-container.register_all(IMiddleware, LoggingMiddleware, order=10)
-container.register_all(IMiddleware, AuthMiddleware, order=20)
-container.register_all(IMiddleware, CorsMiddleware, order=5)
-
-middlewares = container.get_all(IMiddleware)
-# [CorsMiddleware, LoggingMiddleware, AuthMiddleware]
-```
-
----
-
-### Phase 8: Documentation & Examples
-
-#### 8.1 Update README.md
+#### 9.1 Update README.md
 
 ```markdown
 ## Collection Injection
@@ -727,12 +628,24 @@ Register multiple implementations and inject them as a collection:
 ### Registration
 
 ```python
-container.register_all(IPlugin, PluginA)
-container.register_all(IPlugin, PluginB)
-container.register_all(IPlugin, PluginC)
+# Multiple registrations accumulate (no overwriting)
+container.register(IPlugin, PluginA)
+container.register(IPlugin, PluginB)
+container.register(IPlugin, PluginC)
 ```
 
-### Resolution
+### Single Resolution
+
+```python
+# Fails - ambiguous (3 implementations)
+container.get(IPlugin)  # raises AmbiguousDependencyError
+
+# Use names to disambiguate
+container.register(IPlugin, PluginA, name="main")
+container.get(IPlugin, name="main")  # Works
+```
+
+### Collection Resolution
 
 ```python
 plugins: list[IPlugin] = container.get_all(IPlugin)
@@ -750,75 +663,11 @@ class PluginManager(Injectable):
         for plugin in self.plugins:
             plugin.execute()
 ```
-
-### Ordering
-
-Control execution order with the `order` parameter:
-
-```python
-container.register_all(IMiddleware, AuthMiddleware, order=10)
-container.register_all(IMiddleware, LoggingMiddleware, order=20)
-
-# AuthMiddleware will be first in the list
-```
 ```
 
-#### 8.2 Add Example File
+#### 9.2 Add Example
 
-Create `examples/collection_injection_example.py`:
-
-```python
-"""Example: Plugin system with collection injection."""
-
-from inversipy import Container, Injectable, InjectAll, Scopes
-
-# Plugin interface
-class IPlugin:
-    def name(self) -> str: ...
-    def execute(self) -> None: ...
-
-# Plugin implementations
-class LoggingPlugin(IPlugin):
-    def name(self) -> str:
-        return "Logging"
-    def execute(self) -> None:
-        print("Logging plugin executed")
-
-class MetricsPlugin(IPlugin):
-    def name(self) -> str:
-        return "Metrics"
-    def execute(self) -> None:
-        print("Metrics plugin executed")
-
-class CachePlugin(IPlugin):
-    def name(self) -> str:
-        return "Cache"
-    def execute(self) -> None:
-        print("Cache plugin executed")
-
-# Plugin manager using collection injection
-class PluginManager(Injectable):
-    plugins: InjectAll[IPlugin]
-
-    def list_plugins(self) -> list[str]:
-        return [p.name() for p in self.plugins]
-
-    def run_all(self) -> None:
-        for plugin in self.plugins:
-            plugin.execute()
-
-# Setup
-container = Container()
-container.register_all(IPlugin, LoggingPlugin)
-container.register_all(IPlugin, MetricsPlugin)
-container.register_all(IPlugin, CachePlugin)
-container.register(PluginManager)
-
-# Usage
-manager = container.get(PluginManager)
-print(f"Loaded plugins: {manager.list_plugins()}")
-manager.run_all()
-```
+Create `examples/collection_injection_example.py` demonstrating plugin system pattern.
 
 ---
 
@@ -826,59 +675,89 @@ manager.run_all()
 
 | File | Changes |
 |------|---------|
-| `container.py` | Add `_collections` storage, `register_all`, `get_all`, `get_all_async`, `has_all` |
-| `decorators.py` | Add `InjectAll` type alias, update `Injectable` |
-| `module.py` | Add collection methods with visibility |
-| `fastapi.py` | Update `@inject` for collections |
-| `types.py` | Export `InjectAll` |
-| `__init__.py` | Export `InjectAll` |
-| `README.md` | Add collection injection docs |
+| `container.py` | Change `_bindings` to `dict[key, list[Binding]]`, add `get_all`, `count`, update `get` for ambiguity |
+| `decorators.py` | Add `InjectAll[T]` type alias, update `Injectable` |
+| `exceptions.py` | Add `AmbiguousDependencyError` |
+| `module.py` | Update for list-based bindings, add `get_all` |
+| `fastapi.py` | Support `InjectAll` in `@inject` |
+| `__init__.py` | Export `InjectAll`, `AmbiguousDependencyError` |
+| `README.md` | Document collection injection |
 | `examples/collection_injection_example.py` | **NEW** |
 
 ---
 
 ## Test Plan
 
+### Update Existing Tests
+
+Some existing tests may assume overwrite behavior - update them.
+
 ### New Test File: `tests/test_collection_injection.py`
 
-1. **Basic Collection Registration & Resolution**
-   - Register multiple implementations
-   - `get_all()` returns all in order
-   - Empty list when none registered
+1. **Accumulation Behavior**
+   - Multiple `register()` calls accumulate
+   - Same implementation can be registered twice
 
-2. **Collection Scopes**
-   - TRANSIENT: new instances each call
-   - SINGLETON: same instances each call
-   - REQUEST: per-request instances
+2. **Single Resolution Ambiguity**
+   - `get()` with one binding works
+   - `get()` with multiple bindings raises `AmbiguousDependencyError`
+   - `get()` with name works when named
 
-3. **InjectAll Type Alias**
+3. **Collection Resolution**
+   - `get_all()` returns all implementations
+   - `get_all()` returns empty list when none
+   - Order is registration order
+
+4. **InjectAll Type Alias**
    - Property injection works
    - Constructor injection works
-   - Runtime extraction correct
 
-4. **Injectable with Collections**
-   - Class with `InjectAll[T]` property
-   - Mixed `Inject[T]` and `InjectAll[T]`
+5. **Scopes in Collections**
+   - SINGLETON: same instance across get_all calls
+   - TRANSIENT: new instances each call
 
-5. **Module Collections**
-   - Public/private collections
-   - Export collections
-   - Module composition
-
-6. **Ordering**
-   - `order` parameter respected
-   - Default order (registration order)
+6. **Module Collections**
+   - Public/private visibility
+   - Aggregation from modules
 
 7. **Validation**
-   - Missing collection dependencies detected
-   - Collection binding validation
+   - Validates collection dependencies
+   - `InjectAll` with empty collection is valid
 
-8. **Async**
-   - `get_all_async()` works
-   - Async factories in collections
+8. **Error Messages**
+   - `AmbiguousDependencyError` message is helpful
 
-9. **FastAPI Integration**
-   - Route with `InjectAll` parameter
+---
+
+## Migration Guide
+
+### Breaking Change
+
+Code that relies on overwrite behavior will break:
+
+```python
+# Before: PluginB overwrites PluginA
+container.register(IPlugin, PluginA)
+container.register(IPlugin, PluginB)
+container.get(IPlugin)  # Returns PluginB
+
+# After: Raises AmbiguousDependencyError
+container.register(IPlugin, PluginA)
+container.register(IPlugin, PluginB)
+container.get(IPlugin)  # Raises!
+
+# Fix: Use name or get_all
+container.get(IPlugin, name="...")  # If using named bindings
+container.get_all(IPlugin)[-1]      # If you really want "last"
+```
+
+### Recommended Migration
+
+1. Search for multiple `register()` calls with same interface
+2. Either:
+   - Add `name=` to disambiguate
+   - Change to `get_all()` if collection intended
+   - Remove duplicate registrations if unintentional
 
 ---
 
@@ -887,80 +766,55 @@ manager.run_all()
 ### Container Methods
 
 ```python
-# Registration
-container.register_all(IPlugin, PluginA)
-container.register_all(IPlugin, PluginB, scope=Scopes.SINGLETON)
-container.register_all(IPlugin, factory=create_plugin, order=10)
+# Registration (accumulates)
+container.register(IPlugin, PluginA)
+container.register(IPlugin, PluginB)
 
-# Resolution
-plugins: list[IPlugin] = container.get_all(IPlugin)
-plugins: list[IPlugin] = await container.get_all_async(IPlugin)
+# Single resolution (fails if ambiguous)
+container.get(IPlugin)  # Raises if multiple
+container.get(IPlugin, name="x")  # Works with name
 
-# Check
-has_plugins: bool = container.has_all(IPlugin)
+# Collection resolution
+container.get_all(IPlugin) -> list[IPlugin]
+container.get_all_async(IPlugin) -> list[IPlugin]
+
+# Inspection
+container.has(IPlugin) -> bool
+container.count(IPlugin) -> int
 ```
 
 ### Type Annotations
 
 ```python
-# Property injection
-class Manager(Injectable):
-    plugins: InjectAll[IPlugin]
+# Single injection (requires unambiguous or named)
+db: Inject[IDatabase]
+primary: Inject[IDatabase, Named("primary")]
 
-# Constructor injection
-class Manager:
-    def __init__(self, plugins: InjectAll[IPlugin]):
-        self.plugins = plugins
-```
-
-### Module Methods
-
-```python
-module.register_all(IPlugin, PluginA, public=True)
-module.export_all(IPlugin)
-module.get_all(IPlugin)
-module.has_all(IPlugin)
+# Collection injection
+plugins: InjectAll[IPlugin]
 ```
 
 ---
 
 ## Backwards Compatibility
 
-All existing code continues to work unchanged:
+| Pattern | Before | After |
+|---------|--------|-------|
+| Single registration | ✅ Works | ✅ Works |
+| Multiple registrations | Overwrites | **Accumulates** |
+| `get()` with one impl | Returns it | Returns it |
+| `get()` with multiple | Returns last | **Raises error** |
+| `get_all()` | N/A | Returns all |
 
-| Pattern | Status |
-|---------|--------|
-| `container.register(IFoo, Foo)` | ✅ Works (single registration) |
-| `container.get(IFoo)` | ✅ Works (single resolution) |
-| `Inject[T]` | ✅ Works |
-| Collections are opt-in via `register_all` | ✅ New feature |
-
-**Note:** `register()` and `register_all()` use separate storage. They don't interfere with each other.
-
----
-
-## Open Questions
-
-1. **Should `get_all()` return empty list or raise if none registered?**
-   - Recommendation: Return empty list (more flexible for optional plugins)
-
-2. **Should collections inherit from parent container?**
-   - Recommendation: Yes, aggregate parent + child collections
-
-3. **Should there be a `try_get_all()` variant?**
-   - Recommendation: Not needed since `get_all()` returns empty list
-
-4. **Should `register_all` with same implementation twice add duplicates?**
-   - Recommendation: Allow duplicates (user's responsibility)
+**This is a breaking change** for code that intentionally or accidentally registers the same interface multiple times and expects overwrite behavior.
 
 ---
 
 ## Success Criteria
 
-1. ✅ All existing tests pass
-2. ✅ New collection tests pass
-3. ✅ `InjectAll[T]` syntax works at runtime
-4. ✅ Collections respect scopes
-5. ✅ Module visibility works for collections
-6. ✅ Documentation is clear
-7. ✅ Backwards compatible
+1. ✅ Multiple registrations accumulate
+2. ✅ `get()` raises `AmbiguousDependencyError` when ambiguous
+3. ✅ `get_all()` returns all implementations
+4. ✅ `InjectAll[T]` works for property/constructor injection
+5. ✅ Integrates with named bindings feature
+6. ✅ Documentation covers migration
