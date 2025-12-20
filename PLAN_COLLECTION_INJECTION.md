@@ -517,7 +517,13 @@ def get_all[T](self, interface: type[T]) -> list[T]:
 
 ```python
 def validate(self) -> None:
-    """Validate container configuration."""
+    """Validate container configuration.
+
+    Checks:
+    - Circular dependencies
+    - Missing dependencies
+    - Ambiguous dependencies (multiple implementations without name)
+    """
     errors: list[str] = []
 
     # Check for cycles
@@ -543,30 +549,41 @@ def validate(self) -> None:
                         if param_type is None:
                             continue
 
-                        # Check InjectAll
+                        # Check InjectAll - valid even if empty
                         inject_all_type = self._extract_inject_all_type(param_type)
                         if inject_all_type is not None:
-                            # InjectAll is valid even if empty
                             continue
 
-                        # Check regular dependency
+                        # Check regular dependency (Inject or plain type)
                         inject_info = self._extract_inject_info(param_type)
                         if inject_info:
                             actual_type, dep_name = inject_info
-                            if not self.has(actual_type, name=dep_name):
-                                if param.default is inspect.Parameter.empty:
-                                    errors.append(
-                                        f"'{cls.__name__}' requires '{actual_type.__name__}'"
-                                        + (f" (name='{dep_name}')" if dep_name else "")
-                                        + " which is not registered"
-                                    )
+                            dep_key = (actual_type, dep_name) if dep_name else actual_type
                         else:
-                            if not self.has(param_type):
-                                if param.default is inspect.Parameter.empty:
-                                    errors.append(
-                                        f"'{cls.__name__}' requires '{param_type.__name__}' "
-                                        "which is not registered"
-                                    )
+                            actual_type = param_type
+                            dep_name = None
+                            dep_key = param_type
+
+                        # Check if dependency exists
+                        if not self.has(actual_type, name=dep_name):
+                            if param.default is inspect.Parameter.empty:
+                                name_suffix = f" (name='{dep_name}')" if dep_name else ""
+                                errors.append(
+                                    f"'{cls.__name__}' requires '{actual_type.__name__}'"
+                                    f"{name_suffix} which is not registered"
+                                )
+                            continue
+
+                        # Check for ambiguous dependency (multiple without name)
+                        if dep_name is None:
+                            count = self.count(actual_type)
+                            if count > 1:
+                                errors.append(
+                                    f"'{cls.__name__}' requires '{actual_type.__name__}' "
+                                    f"but {count} implementations are registered. "
+                                    f"Use Inject[{actual_type.__name__}, Named('...')] to disambiguate "
+                                    f"or InjectAll[{actual_type.__name__}] for collection injection."
+                                )
 
                 except Exception as e:
                     errors.append(f"Failed to validate '{cls.__name__}': {e}")
@@ -574,6 +591,8 @@ def validate(self) -> None:
     if errors:
         raise ValidationError(errors)
 ```
+
+This validation will catch ambiguous dependencies at startup rather than at runtime, providing early feedback about configuration issues.
 
 ---
 
@@ -723,9 +742,12 @@ Some existing tests may assume overwrite behavior - update them.
 7. **Validation**
    - Validates collection dependencies
    - `InjectAll` with empty collection is valid
+   - **Detects ambiguous dependencies at validation time**
+   - Provides helpful error message with fix suggestions
 
 8. **Error Messages**
    - `AmbiguousDependencyError` message is helpful
+   - Validation error for ambiguity suggests `Named()` or `InjectAll`
 
 ---
 
