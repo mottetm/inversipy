@@ -9,10 +9,11 @@ Inversipy provides a flexible dependency injection container with support for:
 - Function injection via container.run()
 - Property injection via Injectable base class
 - Pure classes with no container coupling
+- Named dependencies for multiple implementations of the same interface
 """
 
 from .container import Binding, Container
-from .decorators import Inject, Injectable
+from .decorators import Inject, Injectable, extract_inject_info
 from .exceptions import (
     CircularDependencyError,
     DependencyNotFoundError,
@@ -24,7 +25,7 @@ from .exceptions import (
 )
 from .module import Module, ModuleBuilder
 from .scopes import Scopes
-from .types import DependencyKey, Factory, ModuleProtocol
+from .types import DependencyKey, Factory, ModuleProtocol, Named
 
 __version__ = "0.1.0"
 
@@ -40,9 +41,11 @@ __all__ = [
     "Factory",
     "DependencyKey",
     "ModuleProtocol",
+    "Named",
     # Dependency injection utilities
     "Inject",
     "Injectable",
+    "extract_inject_info",
     # Exceptions
     "InversipyError",
     "DependencyNotFoundError",

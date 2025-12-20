@@ -12,10 +12,24 @@ class InversipyError(Exception):
 class DependencyNotFoundError(InversipyError):
     """Raised when a dependency cannot be found in the container."""
 
-    def __init__(self, dependency_type: type[Any], container_name: str = "container") -> None:
+    def __init__(
+        self,
+        dependency_type: type[Any],
+        container_name: str = "container",
+        name: str | None = None,
+    ) -> None:
         self.dependency_type = dependency_type
         self.container_name = container_name
-        super().__init__(f"Dependency '{dependency_type.__name__}' not found in {container_name}")
+        self.name = name
+
+        if name:
+            msg = (
+                f"Dependency '{dependency_type.__name__}' with name '{name}' "
+                f"not found in {container_name}"
+            )
+        else:
+            msg = f"Dependency '{dependency_type.__name__}' not found in {container_name}"
+        super().__init__(msg)
 
 
 class CircularDependencyError(InversipyError):

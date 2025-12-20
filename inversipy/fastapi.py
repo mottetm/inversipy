@@ -2,10 +2,10 @@
 
 import inspect
 from collections.abc import Callable
-from typing import Annotated, Any, get_args, get_origin, get_type_hints
+from typing import Any, get_type_hints
 
 from .container import Container
-from .decorators import Inject, _InjectMarker
+from .decorators import extract_inject_info
 
 try:
     from fastapi import Depends, Request  # type: ignore[import-not-found]
@@ -52,7 +52,7 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
     """Decorator for FastAPI routes that auto-injects dependencies.
 
     Transforms route handlers by:
-    1. Identifying parameters marked with Inject[Type]
+    1. Identifying parameters marked with Inject[Type] or Inject[Type, Named("x")]
     2. Resolving them from the container
     3. Passing them to the original function
 
@@ -65,6 +65,7 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
         async def get_users(
             db: Inject[Database],
             logger: Inject[Logger],
+            primary_db: Inject[IDatabase, Named("primary")],
             limit: int = 10
         ):
             logger.info(f"Fetching {limit} users")
@@ -79,7 +80,8 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
         ):
             db = container.get(Database)
             logger = container.get(Logger)
-            return original_get_users(db, logger, limit)
+            primary_db = container.get(IDatabase, name="primary")
+            return original_get_users(db, logger, primary_db, limit)
         ```
     """
     # Get function signature and type hints
@@ -87,40 +89,15 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
     type_hints = get_type_hints(func, include_extras=True)
 
     # Identify which parameters need injection vs normal parameters
-    inject_params: dict[str, type] = {}
+    inject_params: dict[str, tuple[type, str | None]] = {}
     normal_params: list[tuple[str, inspect.Parameter]] = []
 
     for param_name, param in sig.parameters.items():
         if param_name in type_hints:
             hint = type_hints[param_name]
-            origin = get_origin(hint)
-
-            # Check if this uses the Inject[T] type alias
-            if origin is Inject:
-                # Inject[T] expands to the type parameter
-                args = get_args(hint)
-                if args:
-                    inject_params[param_name] = args[0]
-            # Also support raw Annotated[Type, _InjectMarker] for compatibility
-            elif origin is Annotated:
-                args = get_args(hint)
-                if len(args) >= 2:
-                    actual_type = args[0]
-                    metadata = args[1:]
-
-                    # Check if Inject marker is in metadata
-                    needs_injection = False
-                    for meta in metadata:
-                        if isinstance(meta, _InjectMarker):
-                            needs_injection = True
-                            break
-
-                    if needs_injection:
-                        inject_params[param_name] = actual_type
-                    else:
-                        normal_params.append((param_name, param))
-                else:
-                    normal_params.append((param_name, param))
+            inject_info = extract_inject_info(hint)
+            if inject_info is not None:
+                inject_params[param_name] = inject_info
             else:
                 normal_params.append((param_name, param))
         else:
@@ -133,8 +110,8 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
             """Auto-generated async wrapper with dependency injection."""
             # Resolve injected dependencies from container
             injected: dict[str, Any] = {}
-            for param_name, param_type in inject_params.items():
-                injected[param_name] = container.get(param_type)
+            for param_name, (param_type, dep_name) in inject_params.items():
+                injected[param_name] = container.get(param_type, name=dep_name)
 
             # Merge with normal parameters passed by FastAPI
             all_params = {**kwargs, **injected}
@@ -148,8 +125,8 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
             """Auto-generated wrapper with dependency injection."""
             # Resolve injected dependencies from container
             injected: dict[str, Any] = {}
-            for param_name, param_type in inject_params.items():
-                injected[param_name] = container.get(param_type)
+            for param_name, (param_type, dep_name) in inject_params.items():
+                injected[param_name] = container.get(param_type, name=dep_name)
 
             # Merge with normal parameters passed by FastAPI
             all_params = {**kwargs, **injected}
