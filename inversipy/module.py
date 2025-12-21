@@ -5,7 +5,7 @@ from typing import Any
 from .container import Container
 from .exceptions import DependencyNotFoundError, RegistrationError
 from .scopes import Scopes
-from .types import Factory
+from .types import DependencyKey, Factory, make_key
 
 
 class Module(Container):
@@ -14,6 +14,8 @@ class Module(Container):
     Modules allow you to organize dependencies into logical units where you can
     control which dependencies are exposed publicly and which remain private.
     Modules can also register other modules for composition.
+
+    Supports named dependencies for multiple implementations of the same interface.
     """
 
     def __init__(self, name: str) -> None:
@@ -23,7 +25,8 @@ class Module(Container):
             name: Name of the module
         """
         super().__init__(parent=None, name=f"Module({name})")
-        self._public_keys: set[type[Any]] = set()
+        # Now stores DependencyKey which can be type or (type, name) tuple
+        self._public_keys: set[DependencyKey] = set()
 
     def register[T](
         self,
@@ -32,6 +35,8 @@ class Module(Container):
         factory: Factory[T] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
         instance: T | None = None,
+        name: str | None = None,
+        *,
         public: bool = False,
     ) -> "Module":
         """Register a dependency in the module.
@@ -42,7 +47,8 @@ class Module(Container):
             factory: Optional factory function
             scope: Scope for the dependency lifecycle
             instance: Optional pre-created instance
-            public: Whether this dependency should be publicly accessible
+            name: Optional name qualifier for named bindings
+            public: Whether this dependency should be publicly accessible (keyword-only)
 
         Returns:
             Self for chaining
@@ -57,11 +63,13 @@ class Module(Container):
             factory=factory,
             scope=scope,
             instance=instance,
+            name=name,
         )
 
-        # Track public/private
+        # Track public/private with the appropriate key
+        key = make_key(interface, name)
         if public:
-            self._public_keys.add(interface)
+            self._public_keys.add(key)
 
         return self
 
@@ -70,6 +78,8 @@ class Module(Container):
         interface: type[T],
         factory: Factory[T],
         scope: Scopes = Scopes.TRANSIENT,
+        name: str | None = None,
+        *,
         public: bool = False,
     ) -> "Module":
         """Register a factory function for a dependency.
@@ -78,34 +88,43 @@ class Module(Container):
             interface: The interface/type to register
             factory: Factory function to create instances
             scope: Scope for the dependency lifecycle
-            public: Whether this dependency should be publicly accessible
+            name: Optional name qualifier for named bindings
+            public: Whether this dependency should be publicly accessible (keyword-only)
 
         Returns:
             Self for chaining
         """
-        return self.register(interface, factory=factory, scope=scope, public=public)
+        return self.register(interface, factory=factory, scope=scope, name=name, public=public)
 
     def register_instance[T](
-        self, interface: type[T], instance: T, public: bool = False
+        self,
+        interface: type[T],
+        instance: T,
+        name: str | None = None,
+        *,
+        public: bool = False,
     ) -> "Module":
         """Register a pre-created instance.
 
         Args:
             interface: The interface/type to register
             instance: Pre-created instance
-            public: Whether this dependency should be publicly accessible
+            name: Optional name qualifier for named bindings
+            public: Whether this dependency should be publicly accessible (keyword-only)
 
         Returns:
             Self for chaining
         """
-        return self.register(interface, instance=instance, public=public)
+        return self.register(interface, instance=instance, name=name, public=public)
 
     def export(self, *interfaces: type[Any]) -> "Module":
-        """Mark dependencies as public/exported.
+        """Mark unnamed dependencies as public/exported.
 
         This can be used to:
         1. Make a private dependency public
         2. Re-export a dependency from a child module
+
+        For named dependencies, use export_named() instead.
 
         Args:
             *interfaces: Types to export
@@ -140,7 +159,43 @@ class Module(Container):
 
         return self
 
-    def get[T](self, interface: type[T]) -> T:
+    def export_named(self, interface: type[Any], name: str) -> "Module":
+        """Mark a named dependency as public/exported.
+
+        This can be used to:
+        1. Make a private named dependency public
+        2. Re-export a named dependency from a child module
+
+        Args:
+            interface: Type to export
+            name: Name qualifier for the dependency
+
+        Returns:
+            Self for chaining
+
+        Raises:
+            RegistrationError: If the named dependency is not available
+        """
+        key = make_key(interface, name)
+
+        # Check if directly registered
+        if key in self._bindings:
+            self._public_keys.add(key)
+            return self
+
+        # Check if available from a child module (for re-exporting)
+        for module in self._modules:
+            if hasattr(module, "is_public") and module.is_public(interface, name=name):
+                self._public_keys.add(key)
+                return self
+
+        raise RegistrationError(
+            f"Cannot export '{interface.__name__}' with name '{name}' - "
+            f"not registered in module '{self._name}' "
+            f"and not available from any child module"
+        )
+
+    def get[T](self, interface: type[T], name: str | None = None) -> T:
         """Resolve a dependency from the module.
 
         When called externally (from a Container), only public dependencies
@@ -149,6 +204,7 @@ class Module(Container):
 
         Args:
             interface: The type to resolve
+            name: Optional name qualifier for named bindings
 
         Returns:
             Resolved instance
@@ -159,16 +215,16 @@ class Module(Container):
         # If we're in the middle of resolving something (stack not empty),
         # this is an internal call, so allow access to private dependencies
         if self._resolution_stack:
-            return super().get(interface)
+            return super().get(interface, name=name)
 
         # External call - check if dependency is public
-        if not self.is_public(interface):
-            raise DependencyNotFoundError(interface, self._name)
+        if not self.is_public(interface, name=name):
+            raise DependencyNotFoundError(interface, self._name, name=name)
 
         # Public dependency - resolve it
-        return super().get(interface)
+        return super().get(interface, name=name)
 
-    async def get_async[T](self, interface: type[T]) -> T:
+    async def get_async[T](self, interface: type[T], name: str | None = None) -> T:
         """Resolve a dependency from the module asynchronously.
 
         When called externally (from a Container), only public dependencies
@@ -177,6 +233,7 @@ class Module(Container):
 
         Args:
             interface: The type to resolve
+            name: Optional name qualifier for named bindings
 
         Returns:
             Resolved instance
@@ -187,29 +244,30 @@ class Module(Container):
         # If we're in the middle of resolving something (stack not empty),
         # this is an internal call, so allow access to private dependencies
         if self._resolution_stack:
-            return await super().get_async(interface)
+            return await super().get_async(interface, name=name)
 
         # External call - check if dependency is public
-        if not self.is_public(interface):
-            raise DependencyNotFoundError(interface, self._name)
+        if not self.is_public(interface, name=name):
+            raise DependencyNotFoundError(interface, self._name, name=name)
 
         # Public dependency - resolve it
-        return await super().get_async(interface)
+        return await super().get_async(interface, name=name)
 
-    def has(self, interface: type[Any]) -> bool:
+    def has(self, interface: type[Any], name: str | None = None) -> bool:
         """Check if a dependency is publicly available.
 
         This satisfies the ModuleProtocol requirement.
 
         Args:
             interface: The type to check
+            name: Optional name qualifier for named bindings
 
         Returns:
             True if the dependency is registered and public, False otherwise
         """
-        return self.is_public(interface)
+        return self.is_public(interface, name=name)
 
-    def is_public(self, interface: type[Any]) -> bool:
+    def is_public(self, interface: type[Any], name: str | None = None) -> bool:
         """Check if a dependency is public.
 
         Visibility is NOT transitive. Dependencies from child modules are only
@@ -218,25 +276,35 @@ class Module(Container):
 
         Args:
             interface: Type to check
+            name: Optional name qualifier for named bindings
 
         Returns:
             True if public, False otherwise
         """
         # Only check if directly registered/exported as public
         # Child module dependencies are not transitively public
-        return interface in self._public_keys
+        key = make_key(interface, name)
+        return key in self._public_keys
 
-    def get_public_dependencies(self) -> list[type[Any]]:
-        """Get list of all public dependencies.
+    def get_public_dependencies(self) -> list[DependencyKey]:
+        """Get list of all public dependency keys.
 
         Returns:
-            List of public dependency types
+            List of public dependency keys (type or (type, name) tuples)
         """
         return list(self._public_keys)
 
     def __repr__(self) -> str:
         """Get string representation of the module."""
-        public_deps = ", ".join(dep.__name__ for dep in self._public_keys)
+
+        def key_name(key: DependencyKey) -> str:
+            if isinstance(key, tuple):
+                return f"{key[0].__name__}[{key[1]}]"
+            elif isinstance(key, type):
+                return key.__name__
+            return str(key)
+
+        public_deps = ", ".join(key_name(dep) for dep in self._public_keys)
         all_deps_count = len(self._bindings)
         return (
             f"Module({self._name}, "
@@ -263,6 +331,7 @@ class ModuleBuilder:
         factory: Factory[T] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
         instance: T | None = None,
+        name: str | None = None,
     ) -> "ModuleBuilder":
         """Bind a dependency (private by default).
 
@@ -272,6 +341,7 @@ class ModuleBuilder:
             factory: Optional factory function
             scope: Scope for the dependency lifecycle
             instance: Optional pre-created instance
+            name: Optional name qualifier for named bindings
 
         Returns:
             Self for chaining
@@ -283,6 +353,7 @@ class ModuleBuilder:
             scope=scope,
             instance=instance,
             public=False,
+            name=name,
         )
         return self
 
@@ -293,6 +364,7 @@ class ModuleBuilder:
         factory: Factory[T] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
         instance: T | None = None,
+        name: str | None = None,
     ) -> "ModuleBuilder":
         """Bind a public dependency.
 
@@ -302,6 +374,7 @@ class ModuleBuilder:
             factory: Optional factory function
             scope: Scope for the dependency lifecycle
             instance: Optional pre-created instance
+            name: Optional name qualifier for named bindings
 
         Returns:
             Self for chaining
@@ -313,11 +386,14 @@ class ModuleBuilder:
             scope=scope,
             instance=instance,
             public=True,
+            name=name,
         )
         return self
 
     def export(self, *interfaces: type[Any]) -> "ModuleBuilder":
-        """Mark dependencies as public/exported.
+        """Mark unnamed dependencies as public/exported.
+
+        For named dependencies, use export_named() instead.
 
         Args:
             *interfaces: Types to export
@@ -326,6 +402,19 @@ class ModuleBuilder:
             Self for chaining
         """
         self._module.export(*interfaces)
+        return self
+
+    def export_named(self, interface: type[Any], name: str) -> "ModuleBuilder":
+        """Mark a named dependency as public/exported.
+
+        Args:
+            interface: Type to export
+            name: Name qualifier for the dependency
+
+        Returns:
+            Self for chaining
+        """
+        self._module.export_named(interface, name)
         return self
 
     def build(self) -> Module:
