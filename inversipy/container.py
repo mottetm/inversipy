@@ -545,26 +545,61 @@ class Container:
         # If still not found, raise error
         raise DependencyNotFoundError(interface, self._name, name=name)
 
-    def try_get[T](self, interface: type[T], name: str | None = None) -> T | None:
+    def try_get[T](
+        self,
+        interface: type[T],
+        name: str | None = None,
+        *,
+        suppress_ambiguity: bool = False,
+    ) -> T | None:
         """Try to resolve a dependency, returning None if not found.
-
-        Note: AmbiguousDependencyError is still raised (not suppressed) since
-        it indicates a configuration issue that should be addressed.
 
         Args:
             interface: The type to resolve
             name: Optional name qualifier for named bindings
+            suppress_ambiguity: If True, return None instead of raising
+                AmbiguousDependencyError when multiple implementations exist.
+                Default is False (raises the error).
 
         Returns:
             Resolved instance or None
-
-        Raises:
-            AmbiguousDependencyError: If multiple implementations exist
         """
         try:
             return self.get(interface, name=name)
         except DependencyNotFoundError:
             return None
+        except AmbiguousDependencyError:
+            if suppress_ambiguity:
+                return None
+            raise
+
+    async def try_get_async[T](
+        self,
+        interface: type[T],
+        name: str | None = None,
+        *,
+        suppress_ambiguity: bool = False,
+    ) -> T | None:
+        """Try to resolve a dependency asynchronously, returning None if not found.
+
+        Args:
+            interface: The type to resolve
+            name: Optional name qualifier for named bindings
+            suppress_ambiguity: If True, return None instead of raising
+                AmbiguousDependencyError when multiple implementations exist.
+                Default is False (raises the error).
+
+        Returns:
+            Resolved instance or None
+        """
+        try:
+            return await self.get_async(interface, name=name)
+        except DependencyNotFoundError:
+            return None
+        except AmbiguousDependencyError:
+            if suppress_ambiguity:
+                return None
+            raise
 
     async def get_async[T](self, interface: type[T], name: str | None = None) -> T:
         """Resolve a dependency from the container asynchronously.

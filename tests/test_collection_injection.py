@@ -228,6 +228,52 @@ class TestSingleResolutionAmbiguity:
         with pytest.raises(AmbiguousDependencyError):
             container.try_get(IPlugin)
 
+    def test_try_get_suppress_ambiguity_returns_none(self) -> None:
+        """try_get() with suppress_ambiguity=True should return None."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+
+        # With suppress_ambiguity=True, should return None instead of raising
+        result = container.try_get(IPlugin, suppress_ambiguity=True)
+        assert result is None
+
+    def test_try_get_suppress_ambiguity_still_resolves_single(self) -> None:
+        """try_get() with suppress_ambiguity should still resolve single binding."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+
+        result = container.try_get(IPlugin, suppress_ambiguity=True)
+        assert isinstance(result, PluginA)
+
+    @pytest.mark.asyncio
+    async def test_try_get_async_with_multiple_bindings_raises(self) -> None:
+        """try_get_async() should also raise AmbiguousDependencyError by default."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+
+        with pytest.raises(AmbiguousDependencyError):
+            await container.try_get_async(IPlugin)
+
+    @pytest.mark.asyncio
+    async def test_try_get_async_suppress_ambiguity_returns_none(self) -> None:
+        """try_get_async() with suppress_ambiguity=True should return None."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+
+        result = await container.try_get_async(IPlugin, suppress_ambiguity=True)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_try_get_async_returns_none_if_not_found(self) -> None:
+        """try_get_async() should return None if dependency not found."""
+        container = Container()
+
+        result = await container.try_get_async(IPlugin)
+        assert result is None
+
 
 # =============================================================================
 # Test Classes: Collection Resolution
