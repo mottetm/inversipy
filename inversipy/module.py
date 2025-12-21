@@ -391,7 +391,9 @@ class ModuleBuilder:
         return self
 
     def export(self, *interfaces: type[Any]) -> "ModuleBuilder":
-        """Mark dependencies as public/exported.
+        """Mark unnamed dependencies as public/exported.
+
+        For named dependencies, use export_named() instead.
 
         Args:
             *interfaces: Types to export
@@ -400,6 +402,19 @@ class ModuleBuilder:
             Self for chaining
         """
         self._module.export(*interfaces)
+        return self
+
+    def export_named(self, interface: type[Any], name: str) -> "ModuleBuilder":
+        """Mark a named dependency as public/exported.
+
+        Args:
+            interface: Type to export
+            name: Name qualifier for the dependency
+
+        Returns:
+            Self for chaining
+        """
+        self._module.export_named(interface, name)
         return self
 
     def build(self) -> Module:

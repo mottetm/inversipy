@@ -640,3 +640,112 @@ class TestNamedBindingsCircularDependency:
         # has() should find named dependency from module
         assert container.has(IDatabase, name="primary")
         assert not container.has(IDatabase, name="replica")
+
+    def test_validate_includes_named_bindings_in_graph(self) -> None:
+        """Test that named bindings are included in cycle detection graph."""
+        from inversipy.exceptions import ValidationError
+
+        class ServiceWithDep:
+            def __init__(self, db: IDatabase) -> None:
+                self.db = db
+
+        # Register implementation under a named binding
+        # The implementation ServiceWithDep depends on IDatabase
+        container = Container()
+        container.register(IDatabase, ServiceWithDep, name="recursive")
+        # This creates: IDatabase[name='recursive'] -> implementation needs IDatabase
+        # Without the fix, this named binding would be skipped in cycle detection
+
+        # This should raise validation error about missing IDatabase dependency
+        with pytest.raises(ValidationError) as exc_info:
+            container.validate()
+
+        assert "IDatabase" in str(exc_info.value)
+
+
+class TestNamedBindingsRun:
+    """Test container.run() with named dependencies."""
+
+    def test_run_with_named_dependency(self) -> None:
+        """Test run() resolves Inject[T, Named(...)] correctly."""
+        container = Container()
+        container.register(IDatabase, PostgresDB, name="primary")
+
+        def my_func(db: Inject[IDatabase, Named("primary")]) -> str:
+            return db.query("SELECT 1")
+
+        result = container.run(my_func)
+        assert "PostgreSQL" in result
+
+    def test_run_with_multiple_named_dependencies(self) -> None:
+        """Test run() with multiple named dependencies."""
+        container = Container()
+        container.register(IDatabase, PostgresDB, name="primary")
+        container.register(IDatabase, MySQLDB, name="replica")
+
+        def my_func(
+            primary: Inject[IDatabase, Named("primary")],
+            replica: Inject[IDatabase, Named("replica")],
+        ) -> tuple[str, str]:
+            return (primary.query("SELECT 1"), replica.query("SELECT 2"))
+
+        result = container.run(my_func)
+        assert "PostgreSQL" in result[0]
+        assert "MySQL" in result[1]
+
+    def test_run_with_mixed_named_and_unnamed(self) -> None:
+        """Test run() with both named and unnamed dependencies."""
+        container = Container()
+        container.register(IDatabase, PostgresDB, name="primary")
+        container.register(ICache, RedisCache)
+
+        def my_func(
+            db: Inject[IDatabase, Named("primary")],
+            cache: Inject[ICache],
+        ) -> tuple[str, str]:
+            return (db.query("SELECT 1"), cache.get("key"))
+
+        result = container.run(my_func)
+        assert "PostgreSQL" in result[0]
+        assert "redis" in result[1]  # RedisCache.get returns "redis:key"
+
+    @pytest.mark.asyncio
+    async def test_run_async_with_named_dependency(self) -> None:
+        """Test run_async() resolves Inject[T, Named(...)] correctly."""
+        container = Container()
+        container.register(IDatabase, PostgresDB, name="primary")
+
+        def my_func(db: Inject[IDatabase, Named("primary")]) -> str:
+            return db.query("SELECT 1")
+
+        result = await container.run_async(my_func)
+        assert "PostgreSQL" in result
+
+
+class TestModuleBuilderExportNamed:
+    """Test ModuleBuilder.export_named() method."""
+
+    def test_module_builder_export_named(self) -> None:
+        """Test ModuleBuilder can export named dependencies."""
+        module = (
+            ModuleBuilder("Database")
+            .bind(IDatabase, PostgresDB, name="primary")
+            .export_named(IDatabase, "primary")
+            .build()
+        )
+
+        assert module.is_public(IDatabase, name="primary")
+
+    def test_module_builder_export_named_chaining(self) -> None:
+        """Test ModuleBuilder.export_named() returns self for chaining."""
+        module = (
+            ModuleBuilder("Database")
+            .bind(IDatabase, PostgresDB, name="primary")
+            .bind(IDatabase, MySQLDB, name="replica")
+            .export_named(IDatabase, "primary")
+            .export_named(IDatabase, "replica")
+            .build()
+        )
+
+        assert module.is_public(IDatabase, name="primary")
+        assert module.is_public(IDatabase, name="replica")
