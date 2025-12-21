@@ -1,14 +1,27 @@
-# Code Review: Named Dependencies Feature
+# Code Review: Named Dependencies Feature (Round 2)
 
 **Branch:** `claude/implement-named-dependencies-BOhgM`
-**Commit:** `134af40`
-**Test Status:** 149 passed, 2 skipped
+**Commit:** `320d7f8`
+**Test Status:** 157 passed, 2 skipped
 
 ---
 
 ## Overview
 
 This PR implements **named dependencies** (qualifiers) to support registering and resolving multiple implementations of the same interface. This is a common DI pattern for scenarios like primary/replica databases, different cache implementations, etc.
+
+---
+
+## Issues Addressed Since Last Review
+
+| Issue | Status | How Fixed |
+|-------|--------|-----------|
+| `has()` doesn't check modules for named deps | **Fixed** | Now passes `name` to `module.has()` |
+| Validation ignores named deps in constructors | **Fixed** | Uses `extract_inject_info()` in validation |
+| `export()` doesn't support named deps | **Fixed** | Added `export_named(interface, name)` method |
+| No circular dep tests with named bindings | **Fixed** | Added `TestNamedBindingsCircularDependency` class |
+| `Named("")` accepted (no validation) | **Fixed** | Raises `ValueError` for empty/whitespace |
+| `get_type_from_key` lost error handling | **Fixed** | Restored `ValueError` for invalid keys |
 
 ---
 
@@ -40,17 +53,20 @@ class UserService(Injectable):
 
 ### 3. Comprehensive Test Coverage
 
-The test suite (`test_named_bindings.py`, 539 lines) covers:
+The test suite (`test_named_bindings.py`) now covers 41 test cases including:
 - Basic registration/resolution
 - All registration methods (`register`, `register_factory`, `register_instance`)
 - Scopes with named bindings
 - `has()` and `try_get()` methods
 - Injectable class integration
-- Module integration
+- Module integration with `export_named()`
 - Parent-child container hierarchy
 - Async resolution
 - Factory functions with named dependencies
+- Circular dependency detection
+- Validation with named dependencies
 - Error messages
+- Input validation for `Named` class
 
 ### 4. Backward Compatibility
 
@@ -59,207 +75,69 @@ The implementation is fully backward compatible:
 - Named and unnamed bindings coexist
 - Existing code requires no changes
 
-### 5. Code Consolidation
+### 5. Code Quality
 
-- `extract_inject_info()` is now a public helper reused across modules
+- `extract_inject_info()` is a public helper reused across modules
 - `make_key()` and `get_type_from_key()` centralized in `types.py`
 - `_format_dependency()` helper for consistent error messages
+- Proper input validation on `Named` class
+- Error handling restored in utility functions
 
 ---
 
-## Issues
+## Remaining Minor Issues
 
-### 1. `has()` Method Inconsistency with Module Named Dependencies
-
-**Severity:** High
-
-In `container.py:611-615`:
-```python
-# Check registered modules (only for unnamed dependencies)
-if name is None:
-    for module in self._modules:
-        if module.has(interface):
-            return True
-```
-
-But `get()` now passes `name` to modules. This is inconsistent:
-- `container.get(IDatabase, name="primary")` - Checks modules with name
-- `container.has(IDatabase, name="primary")` - Skips modules entirely
-
-**Impact:** `has()` returns `False` for named dependencies in modules even when `get()` would succeed.
-
-**Recommendation:** Update `has()` to pass `name` to modules:
-```python
-for module in self._modules:
-    if module.has(interface, name=name):
-        return True
-```
-
----
-
-### 2. `Module.export()` Doesn't Support Named Dependencies
-
-**Severity:** Medium
-
-In `module.py:110-133`, the `export()` method only takes raw types:
-```python
-def export(self, *interfaces: type[Any]) -> "Module":
-```
-
-There's no way to export a named binding after registration:
-```python
-module.register(IDatabase, PostgresDB, name="primary", public=False)
-module.export(IDatabase)  # Exports UNNAMED binding, not "primary"
-```
-
-**Recommendation:** Either:
-1. Add `export_named(interface, name)` method, or
-2. Accept tuples: `export((IDatabase, "primary"))`
-
----
-
-### 3. Validation Doesn't Check Named Dependencies
-
-**Severity:** High
-
-The `_validate_sync()` and `_validate_async()` methods iterate over `self._bindings` but don't consider named dependencies when checking transitive dependencies.
-
-For example:
-```python
-container.register(IService, MyService)  # MyService needs IDatabase[name="primary"]
-container.register(IDatabase, PostgresDB, name="primary")
-container.validate()  # Should pass but may not detect the named dependency
-```
-
-The validation logic doesn't use `extract_inject_info()` when inspecting constructor dependencies.
-
-**Recommendation:** Update validation to parse `Inject[T, Named(...)]` annotations.
-
----
-
-### 4. No Circular Dependency Tests with Named Bindings
-
-**Severity:** Medium
-
-The test suite doesn't verify circular dependency detection with named dependencies:
-```python
-class A:
-    def __init__(self, b: Inject[B, Named("special")]): ...
-
-class B:
-    def __init__(self, a: Inject[A, Named("primary")]): ...
-```
-
-**Recommendation:** Add test cases for this scenario.
-
----
-
-### 5. `Named` Accepts Invalid Strings
+### 1. Mypy Plugin Has No Tests
 
 **Severity:** Low
-
-```python
-Named("")      # Empty string - likely a bug
-Named("  ")    # Whitespace only - likely a bug
-```
-
-**Recommendation:** Add validation in `Named.__init__`:
-```python
-def __init__(self, name: str) -> None:
-    if not name or not name.strip():
-        raise ValueError("Named qualifier cannot be empty")
-    self.name = name
-```
-
----
-
-### 6. Mypy Plugin Has No Tests
-
-**Severity:** Medium
 
 The `mypy_plugin.py` file is 94 lines with zero test coverage. The plugin could break silently with mypy updates.
 
-**Recommendation:** Add integration tests that run mypy on sample code.
+**Recommendation:** Consider adding integration tests in a follow-up PR.
 
 ---
 
-### 7. Docstring Placement Issue
+### 2. Docstring Placement
 
 **Severity:** Low
 
-In `decorators.py:25-48`:
-```python
-_InjectAliasType = Inject  # type: ignore[type-arg]
-"""Type alias for dependency injection..."""
-```
+In `decorators.py`, the docstring attaches to `_InjectAliasType` (private), not `Inject`. `help(Inject)` won't show this documentation.
 
-The docstring attaches to `_InjectAliasType` (private), not `Inject`. `help(Inject)` won't show this documentation.
+**Recommendation:** Can be addressed in a follow-up PR.
 
 ---
 
-### 8. Injectable Signature Loses Qualifier Info
+### 3. Injectable Signature Loses Qualifier Info
 
 **Severity:** Low
 
-The generated `__init__` signature shows `db: IDatabase` instead of `db: Inject[IDatabase, Named("primary")]`:
+The generated `__init__` signature shows `db: IDatabase` instead of `db: Inject[IDatabase, Named("primary")]`. IDE tooling loses information about which named binding is expected.
 
-```python
-param_types = [t for t, _ in inject_fields.values()]  # Drops Named qualifier
-```
-
-IDE tooling loses information about which named binding is expected.
+**Recommendation:** Can be addressed in a follow-up PR if IDE integration is important.
 
 ---
 
-### 9. `get_type_from_key` Lost Error Handling
+## Summary
 
-**Severity:** Low
-
-The function no longer validates input:
-```python
-def get_type_from_key(key: DependencyKey) -> type:
-    if isinstance(key, tuple):
-        return key[0]
-    return key  # No validation if key is invalid
-```
-
-Previous version had `raise ValueError` fallback.
-
----
-
-## Summary Table
-
-| Issue | Severity | Category |
-|-------|----------|----------|
-| `has()` doesn't check modules for named deps | High | Bug |
-| Validation ignores named deps in constructors | High | Bug |
-| `export()` doesn't support named deps | Medium | Feature Gap |
-| No circular dep tests with named bindings | Medium | Test Gap |
-| Mypy plugin has no tests | Medium | Test Gap |
-| `Named("")` accepted (no validation) | Low | Robustness |
-| Docstring on wrong symbol | Low | Documentation |
-| Injectable signature loses qualifier info | Low | DX |
-| `get_type_from_key` lost error handling | Low | Robustness |
-
----
-
-## Recommendations
-
-### Before Merge (Blocking)
-
-1. Fix `has()` to check modules with named dependencies
-2. Update validation to understand `Inject[T, Named(...)]` annotations
-3. Add circular dependency test with named bindings
-
-### Follow-up PRs (Non-blocking)
-
-1. Add `export()` support for named dependencies
-2. Add mypy plugin tests
-3. Validate `Named` constructor input
-4. Improve docstring placement
+| Category | Count |
+|----------|-------|
+| Blocking Issues | 0 |
+| Non-blocking Issues | 3 (all Low severity) |
+| Tests Added | 8 new tests |
+| Total Test Coverage | 157 tests passing |
 
 ---
 
 ## Verdict
 
-The implementation is well-designed with clean APIs and comprehensive happy-path tests. The major architectural concerns from the initial review were addressed. However, there are consistency bugs (`has()` vs `get()`) and validation gaps that should be fixed before merging to prevent production surprises.
+**Ready to merge.**
+
+All blocking issues from the previous review have been addressed:
+- `has()` now correctly checks modules for named dependencies
+- Validation understands `Inject[T, Named(...)]` annotations
+- `export_named()` method added for module exports
+- Circular dependency tests added
+- Input validation added to `Named` class
+- Error handling restored in `get_type_from_key()`
+
+The remaining issues are cosmetic (docstrings, IDE hints) and can be addressed in follow-up PRs. The implementation is solid, well-tested, and ready for production use.
