@@ -11,6 +11,9 @@ A powerful and type-safe dependency injection/IoC (Inversion of Control) library
 - **Multiple scopes** - Singleton, Transient, and Request scopes
 - **Function injection** - Run functions with automatic dependency injection via `container.run()`
 - **Property injection** - Injectable base class for clean, declarative dependency injection
+- **Named dependencies** - Register multiple implementations with names for disambiguation
+- **Collection injection** - Register multiple implementations and inject as a collection with `InjectAll`
+- **Named collections** - Group implementations by name and inject with `InjectAllNamed`
 - **Async support** - First-class support for async dependencies
 - **Type-safe** - Full type hint support for better IDE integration
 - **Pure classes** - No container coupling - classes remain framework-agnostic
@@ -359,6 +362,126 @@ Classes using `Injectable` remain container-agnostic and can be used standalone:
 my_db = Database()
 my_logger = Logger()
 service = UserService(database=my_db, logger=my_logger)
+```
+
+### Named Dependencies
+
+Register multiple implementations of the same interface using named dependencies:
+
+```python
+from inversipy import Container, Inject, Named
+
+class IDatabase:
+    pass
+
+class PostgresDB(IDatabase):
+    pass
+
+class SQLiteDB(IDatabase):
+    pass
+
+container = Container()
+container.register(IDatabase, PostgresDB, name="primary")
+container.register(IDatabase, SQLiteDB, name="backup")
+
+# Resolve by name
+primary_db = container.get(IDatabase, name="primary")
+backup_db = container.get(IDatabase, name="backup")
+```
+
+With property injection:
+
+```python
+from inversipy import Injectable, Inject, Named
+
+class DataService(Injectable):
+    primary_db: Inject[IDatabase, Named("primary")]
+    backup_db: Inject[IDatabase, Named("backup")]
+```
+
+### Collection Injection
+
+Register multiple implementations and inject them as a collection using `InjectAll`:
+
+```python
+from inversipy import Container, InjectAll, Injectable
+
+class IPlugin:
+    def execute(self) -> str:
+        raise NotImplementedError
+
+class PluginA(IPlugin):
+    def execute(self) -> str:
+        return "PluginA executed"
+
+class PluginB(IPlugin):
+    def execute(self) -> str:
+        return "PluginB executed"
+
+# Multiple registrations accumulate (no overwriting)
+container = Container()
+container.register(IPlugin, PluginA)
+container.register(IPlugin, PluginB)
+
+# Get all implementations
+plugins = container.get_all(IPlugin)  # [PluginA(), PluginB()]
+for plugin in plugins:
+    print(plugin.execute())
+
+# Single resolution fails when ambiguous
+# container.get(IPlugin)  # raises AmbiguousDependencyError
+```
+
+With property injection:
+
+```python
+class PluginManager(Injectable):
+    plugins: InjectAll[IPlugin]
+
+    def run_all(self) -> list[str]:
+        return [plugin.execute() for plugin in self.plugins]
+
+container.register(PluginManager)
+manager = container.get(PluginManager)
+results = manager.run_all()  # ['PluginA executed', 'PluginB executed']
+```
+
+> **Migration Note**: Multiple `register()` calls for the same interface now **accumulate**
+> rather than overwrite. Code that relied on overwriting behavior should either:
+> - Use named bindings: `container.register(IPlugin, NewImpl, name="main")`
+> - Or explicitly clear bindings before re-registering
+
+### Named Collection Injection
+
+Combine named dependencies with collection injection using `InjectAll[T, Named("x")]`:
+
+```python
+from inversipy import Container, InjectAll, Named, Injectable
+
+# Register plugins in named groups
+container = Container()
+container.register(IPlugin, PluginA, name="core")
+container.register(IPlugin, PluginB, name="core")
+container.register(IPlugin, PluginC, name="optional")
+
+# Get all implementations in a named group
+core_plugins = container.get_all(IPlugin, name="core")  # [PluginA(), PluginB()]
+optional_plugins = container.get_all(IPlugin, name="optional")  # [PluginC()]
+```
+
+With property injection:
+
+```python
+class PluginManager(Injectable):
+    core_plugins: InjectAll[IPlugin, Named("core")]
+    optional_plugins: InjectAll[IPlugin, Named("optional")]
+
+    def run_core(self) -> list[str]:
+        return [p.execute() for p in self.core_plugins]
+
+container.register(PluginManager)
+manager = container.get(PluginManager)
+manager.run_core()  # Only runs core plugins
 ```
 
 ## Advanced Usage
