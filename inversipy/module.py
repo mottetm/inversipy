@@ -267,6 +267,78 @@ class Module(Container):
         """
         return self.is_public(interface, name=name)
 
+    def count(self, interface: type[Any], name: str | None = None) -> int:
+        """Count public implementations registered for an interface.
+
+        Args:
+            interface: The interface type
+            name: Optional name qualifier for named bindings
+
+        Returns:
+            Number of public registered implementations
+        """
+        key = make_key(interface, name)
+        # Only count if this key is public
+        if key not in self._public_keys:
+            return 0
+        return len(self._bindings.get(key, []))
+
+    def get_all[T](self, interface: type[T], *, name: str | None = None) -> list[T]:
+        """Resolve all public implementations of an interface.
+
+        Args:
+            interface: The interface type to resolve
+            name: Optional name for named collection (default: None for unnamed bindings)
+
+        Returns:
+            List of all public registered implementations (empty if none)
+        """
+        key: DependencyKey = make_key(interface, name)
+
+        # If we're in the middle of resolving something, allow internal access
+        if self._resolution_stack:
+            return super().get_all(interface, name=name)
+
+        # External call - only return if the interface key is public
+        if key not in self._public_keys:
+            return []
+
+        # Only resolve from local bindings (don't include child modules)
+        instances: list[T] = []
+        bindings = self._bindings.get(key, [])
+        for binding in bindings:
+            instance = binding.create_instance(self)
+            instances.append(instance)
+        return instances
+
+    async def get_all_async[T](self, interface: type[T], *, name: str | None = None) -> list[T]:
+        """Resolve all public implementations asynchronously.
+
+        Args:
+            interface: The interface type to resolve
+            name: Optional name for named collection (default: None for unnamed bindings)
+
+        Returns:
+            List of all public registered implementations (empty if none)
+        """
+        key: DependencyKey = make_key(interface, name)
+
+        # If we're in the middle of resolving something, allow internal access
+        if self._resolution_stack:
+            return await super().get_all_async(interface, name=name)
+
+        # External call - only return if the interface key is public
+        if key not in self._public_keys:
+            return []
+
+        # Only resolve from local bindings (don't include child modules)
+        instances: list[T] = []
+        bindings = self._bindings.get(key, [])
+        for binding in bindings:
+            instance = await binding.create_instance_async(self)
+            instances.append(instance)
+        return instances
+
     def is_public(self, interface: type[Any], name: str | None = None) -> bool:
         """Check if a dependency is public.
 
