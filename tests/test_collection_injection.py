@@ -7,22 +7,16 @@ interface and inject them as a collection.
 import pytest
 
 from inversipy import (
+    AmbiguousDependencyError,
     Container,
     Inject,
+    InjectAll,
     Injectable,
     Module,
     Named,
     Scopes,
     ValidationError,
 )
-
-# These imports will fail until the feature is implemented
-try:
-    from inversipy import AmbiguousDependencyError, InjectAll
-except ImportError:
-    # Placeholder for tests to run (they will fail with appropriate errors)
-    AmbiguousDependencyError = None  # type: ignore
-    InjectAll = None  # type: ignore
 
 
 # =============================================================================

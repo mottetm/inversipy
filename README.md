@@ -446,6 +446,11 @@ manager = container.get(PluginManager)
 results = manager.run_all()  # ['PluginA executed', 'PluginB executed']
 ```
 
+> **Migration Note**: Multiple `register()` calls for the same interface now **accumulate**
+> rather than overwrite. Code that relied on overwriting behavior should either:
+> - Use named bindings: `container.register(IPlugin, NewImpl, name="main")`
+> - Or explicitly clear bindings before re-registering
+
 ### Named Collection Injection
 
 Combine named dependencies with collection injection using `InjectAll[T, Named("x")]`:

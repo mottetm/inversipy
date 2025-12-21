@@ -717,7 +717,7 @@ class Container:
                 try:
                     module_instances = module.get_all(interface, name=name)
                     instances.extend(module_instances)
-                except Exception:
+                except DependencyNotFoundError:
                     pass
 
         # Get from parent container
@@ -754,7 +754,7 @@ class Container:
                 try:
                     module_instances = await module.get_all_async(interface, name=name)
                     instances.extend(module_instances)
-                except Exception:
+                except DependencyNotFoundError:
                     pass
 
         # Get from parent container

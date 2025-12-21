@@ -205,7 +205,7 @@ class Injectable:
             # Combine both inject_fields and inject_all_fields
             param_names = list(inject_fields.keys()) + list(inject_all_fields.keys())
             param_types: list[type[Any]] = [t for t, _ in inject_fields.values()]
-            param_types.extend([list] for _ in inject_all_fields.values())  # type: ignore
+            param_types.extend([list] * len(inject_all_fields))  # type: ignore
 
             # Build the function code
             def make_init(field_names: list[str]) -> Callable[..., None]:
