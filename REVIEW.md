@@ -17,11 +17,55 @@ This PR implements **named dependencies** (qualifiers) to support registering an
 | Issue | Status | How Fixed |
 |-------|--------|-----------|
 | `has()` doesn't check modules for named deps | **Fixed** | Now passes `name` to `module.has()` |
-| Validation ignores named deps in constructors | **Fixed** | Uses `extract_inject_info()` in validation |
+| Validation ignores named deps in constructors | **Partial** | Uses `extract_inject_info()` but cycle detection broken |
 | `export()` doesn't support named deps | **Fixed** | Added `export_named(interface, name)` method |
-| No circular dep tests with named bindings | **Fixed** | Added `TestNamedBindingsCircularDependency` class |
+| No circular dep tests with named bindings | **Partial** | Tests runtime detection, not `validate()` |
 | `Named("")` accepted (no validation) | **Fixed** | Raises `ValueError` for empty/whitespace |
 | `get_type_from_key` lost error handling | **Fixed** | Restored `ValueError` for invalid keys |
+
+---
+
+## NEW BLOCKING ISSUE
+
+### `_detect_cycles()` Skips Named Bindings Entirely
+
+**Severity:** High
+
+In `container.py` line 1082:
+```python
+if binding.implementation is not None and isinstance(key, type):
+    deps = self._get_implementation_dependencies(binding.implementation)
+```
+
+When the key is a tuple like `(IDatabase, "special")`, `isinstance(key, type)` returns `False`, so **named bindings are completely excluded from cycle detection**.
+
+**Proof:**
+```python
+class ServiceA:
+    def __init__(self, b: Inject[IDatabase, Named("special")]): ...
+
+class ServiceB(IDatabase):
+    def __init__(self, a: ServiceA): ...
+
+container.register(ServiceA)
+container.register(IDatabase, ServiceB, name="special")
+container.register(ServiceB)
+
+container.validate()  # PASSES - does not detect cycle!
+container.get(ServiceA)  # Raises CircularDependencyError
+```
+
+**Impact:** Users relying on `validate()` to catch cycles before runtime will get false confidence. The cycle only manifests when `get()` is called.
+
+**Fix:** Update `_detect_cycles()` to handle tuple keys:
+```python
+if binding.implementation is not None:
+    # Extract type from key (handles both type and (type, name) tuple)
+    key_type = get_type_from_key(key) if isinstance(key, tuple) else key
+    if isinstance(key_type, type):
+        deps = self._get_implementation_dependencies(binding.implementation)
+        ...
+```
 
 ---
 
@@ -29,59 +73,19 @@ This PR implements **named dependencies** (qualifiers) to support registering an
 
 ### 1. Clean API Design
 
-The API follows intuitive patterns consistent with other DI frameworks:
-
-```python
-# Registration
-container.register(IDatabase, PostgresDB, name="primary")
-container.register(IDatabase, MySQLDB, name="replica")
-
-# Resolution
-primary = container.get(IDatabase, name="primary")
-replica = container.get(IDatabase, name="replica")
-```
+The API follows intuitive patterns consistent with other DI frameworks.
 
 ### 2. Excellent Type Annotation Integration
 
-The `Inject[T, Named("...")]` syntax is elegant and leverages Python's type system:
+The `Inject[T, Named("...")]` syntax is elegant.
 
-```python
-class UserService(Injectable):
-    primary_db: Inject[IDatabase, Named("primary")]
-    replica_db: Inject[IDatabase, Named("replica")]
-```
+### 3. Runtime Circular Dependency Detection Works
 
-### 3. Comprehensive Test Coverage
-
-The test suite (`test_named_bindings.py`) now covers 41 test cases including:
-- Basic registration/resolution
-- All registration methods (`register`, `register_factory`, `register_instance`)
-- Scopes with named bindings
-- `has()` and `try_get()` methods
-- Injectable class integration
-- Module integration with `export_named()`
-- Parent-child container hierarchy
-- Async resolution
-- Factory functions with named dependencies
-- Circular dependency detection
-- Validation with named dependencies
-- Error messages
-- Input validation for `Named` class
+The runtime detection via `get()` correctly catches cycles - only `validate()` is broken.
 
 ### 4. Backward Compatibility
 
-The implementation is fully backward compatible:
-- Unnamed bindings continue to work unchanged
-- Named and unnamed bindings coexist
-- Existing code requires no changes
-
-### 5. Code Quality
-
-- `extract_inject_info()` is a public helper reused across modules
-- `make_key()` and `get_type_from_key()` centralized in `types.py`
-- `_format_dependency()` helper for consistent error messages
-- Proper input validation on `Named` class
-- Error handling restored in utility functions
+Fully backward compatible with existing code.
 
 ---
 
@@ -91,29 +95,13 @@ The implementation is fully backward compatible:
 
 **Severity:** Low
 
-The `mypy_plugin.py` file is 94 lines with zero test coverage. The plugin could break silently with mypy updates.
-
-**Recommendation:** Consider adding integration tests in a follow-up PR.
-
----
-
 ### 2. Docstring Placement
 
 **Severity:** Low
 
-In `decorators.py`, the docstring attaches to `_InjectAliasType` (private), not `Inject`. `help(Inject)` won't show this documentation.
-
-**Recommendation:** Can be addressed in a follow-up PR.
-
----
-
 ### 3. Injectable Signature Loses Qualifier Info
 
 **Severity:** Low
-
-The generated `__init__` signature shows `db: IDatabase` instead of `db: Inject[IDatabase, Named("primary")]`. IDE tooling loses information about which named binding is expected.
-
-**Recommendation:** Can be addressed in a follow-up PR if IDE integration is important.
 
 ---
 
@@ -121,7 +109,7 @@ The generated `__init__` signature shows `db: IDatabase` instead of `db: Inject[
 
 | Category | Count |
 |----------|-------|
-| Blocking Issues | 0 |
+| Blocking Issues | **1** |
 | Non-blocking Issues | 3 (all Low severity) |
 | Tests Added | 8 new tests |
 | Total Test Coverage | 157 tests passing |
@@ -130,14 +118,17 @@ The generated `__init__` signature shows `db: IDatabase` instead of `db: Inject[
 
 ## Verdict
 
-**Ready to merge.**
+**NOT ready to merge.**
 
-All blocking issues from the previous review have been addressed:
-- `has()` now correctly checks modules for named dependencies
-- Validation understands `Inject[T, Named(...)]` annotations
-- `export_named()` method added for module exports
-- Circular dependency tests added
-- Input validation added to `Named` class
-- Error handling restored in `get_type_from_key()`
+The `_detect_cycles()` method completely ignores named bindings, making `validate()` unreliable for detecting circular dependencies when named dependencies are involved. The test `test_circular_dependency_with_named_bindings` only tests runtime detection, masking this bug.
 
-The remaining issues are cosmetic (docstrings, IDE hints) and can be addressed in follow-up PRs. The implementation is solid, well-tested, and ready for production use.
+### Required Before Merge
+
+1. Fix `_detect_cycles()` to include named bindings in the dependency graph
+2. Add test that `validate()` (not just `get()`) detects cycles with named deps
+
+### Follow-up PRs (Non-blocking)
+
+1. Mypy plugin tests
+2. Docstring placement
+3. Injectable signature info
