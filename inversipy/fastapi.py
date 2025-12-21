@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any, get_type_hints
 
 from .container import Container
-from .decorators import extract_inject_info, extract_inject_all_info
+from .decorators import extract_inject_all_info, extract_inject_info
 
 try:
     from fastapi import Depends, Request  # type: ignore[import-not-found]
@@ -53,7 +53,7 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
 
     Transforms route handlers by:
     1. Identifying parameters marked with Inject[Type], Inject[Type, Named("x")],
-       InjectAll[Type], or InjectAllNamed[Type, Named("x")]
+       InjectAll[Type], or InjectAll[Type, Named("x")]
     2. Resolving them from the container
     3. Passing them to the original function
 
@@ -68,7 +68,7 @@ def inject[T](func: Callable[..., T]) -> Callable[..., T]:
             logger: Inject[Logger],
             primary_db: Inject[IDatabase, Named("primary")],
             plugins: InjectAll[IPlugin],
-            core_plugins: InjectAllNamed[IPlugin, Named("core")],
+            core_plugins: InjectAll[IPlugin, Named("core")],
             limit: int = 10
         ):
             logger.info(f"Fetching {limit} users")

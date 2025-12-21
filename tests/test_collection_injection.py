@@ -8,7 +8,6 @@ import pytest
 
 from inversipy import (
     Container,
-    DependencyNotFoundError,
     Inject,
     Injectable,
     Module,
@@ -19,12 +18,11 @@ from inversipy import (
 
 # These imports will fail until the feature is implemented
 try:
-    from inversipy import AmbiguousDependencyError, InjectAll, InjectAllNamed
+    from inversipy import AmbiguousDependencyError, InjectAll
 except ImportError:
     # Placeholder for tests to run (they will fail with appropriate errors)
     AmbiguousDependencyError = None  # type: ignore
     InjectAll = None  # type: ignore
-    InjectAllNamed = None  # type: ignore
 
 
 # =============================================================================
@@ -1012,14 +1010,14 @@ class TestNamedCollectionInjection:
         assert plugins1[0] is not plugins2[0]
 
 
-class TestInjectAllNamedTypeAlias:
-    """Test InjectAllNamed[T, Named('x')] type alias for property/constructor injection."""
+class TestInjectAllWithNamedTypeAlias:
+    """Test InjectAll[T, Named('x')] type alias for property/constructor injection."""
 
-    def test_inject_all_named_property_injection(self) -> None:
-        """InjectAllNamed should work with Injectable property injection."""
+    def test_inject_all_with_named_property_injection(self) -> None:
+        """InjectAll[T, Named()] should work with Injectable property injection."""
 
         class PluginManager(Injectable):
-            core_plugins: InjectAllNamed[IPlugin, Named("core")]
+            core_plugins: InjectAll[IPlugin, Named("core")]
 
             def run_core(self) -> list[str]:
                 return [p.execute() for p in self.core_plugins]
@@ -1039,10 +1037,10 @@ class TestInjectAllNamedTypeAlias:
         assert "PluginC" not in results
 
     def test_inject_all_named_constructor_injection(self) -> None:
-        """InjectAllNamed should work with constructor injection."""
+        """InjectAll should work with constructor injection."""
 
         class PluginRunner:
-            def __init__(self, plugins: InjectAllNamed[IPlugin, Named("runner")]) -> None:
+            def __init__(self, plugins: InjectAll[IPlugin, Named("runner")]) -> None:
                 self.plugins = plugins
 
         container = Container()
@@ -1055,10 +1053,10 @@ class TestInjectAllNamedTypeAlias:
         assert len(runner.plugins) == 2
 
     def test_inject_all_named_with_empty_collection(self) -> None:
-        """InjectAllNamed should inject empty list when no matching named bindings."""
+        """InjectAll should inject empty list when no matching named bindings."""
 
         class OptionalManager(Injectable):
-            plugins: InjectAllNamed[IPlugin, Named("missing")]
+            plugins: InjectAll[IPlugin, Named("missing")]
 
         container = Container()
         container.register(OptionalManager)
@@ -1069,11 +1067,11 @@ class TestInjectAllNamedTypeAlias:
         assert isinstance(manager.plugins, list)
 
     def test_inject_all_named_combined_with_inject_all(self) -> None:
-        """InjectAllNamed can be used alongside InjectAll."""
+        """InjectAll can be used alongside InjectAll."""
 
         class ComplexManager(Injectable):
             all_plugins: InjectAll[IPlugin]
-            core_plugins: InjectAllNamed[IPlugin, Named("core")]
+            core_plugins: InjectAll[IPlugin, Named("core")]
 
         container = Container()
         container.register(IPlugin, PluginA)  # Unnamed
@@ -1092,10 +1090,10 @@ class TestInjectAllNamedTypeAlias:
         assert len(manager.core_plugins) == 2
 
     def test_inject_all_named_with_inject(self) -> None:
-        """InjectAllNamed can be used alongside regular Inject."""
+        """InjectAll can be used alongside regular Inject."""
 
         class MixedService(Injectable):
-            core_plugins: InjectAllNamed[IPlugin, Named("core")]
+            core_plugins: InjectAll[IPlugin, Named("core")]
             primary: Inject[IService]
 
         container = Container()
@@ -1110,11 +1108,11 @@ class TestInjectAllNamedTypeAlias:
         assert isinstance(service.primary, ServiceImpl)
 
     def test_multiple_inject_all_named_different_groups(self) -> None:
-        """Multiple InjectAllNamed with different groups."""
+        """Multiple InjectAll with different groups."""
 
         class MultiGroupManager(Injectable):
-            core_plugins: InjectAllNamed[IPlugin, Named("core")]
-            optional_plugins: InjectAllNamed[IPlugin, Named("optional")]
+            core_plugins: InjectAll[IPlugin, Named("core")]
+            optional_plugins: InjectAll[IPlugin, Named("optional")]
 
         container = Container()
         container.register(IPlugin, PluginA, name="core")
@@ -1183,9 +1181,9 @@ class TestNamedCollectionContainerRun:
     """Test container.run() with named collection injection."""
 
     def test_run_with_inject_all_named_parameter(self) -> None:
-        """container.run() should resolve InjectAllNamed parameters."""
+        """container.run() should resolve InjectAll parameters."""
 
-        def process_core(plugins: InjectAllNamed[IPlugin, Named("core")]) -> list[str]:
+        def process_core(plugins: InjectAll[IPlugin, Named("core")]) -> list[str]:
             return [p.execute() for p in plugins]
 
         container = Container()
@@ -1202,9 +1200,9 @@ class TestNamedCollectionContainerRun:
 
     @pytest.mark.asyncio
     async def test_run_async_with_inject_all_named(self) -> None:
-        """container.run_async() should resolve InjectAllNamed parameters."""
+        """container.run_async() should resolve InjectAll parameters."""
 
-        def process_core(plugins: InjectAllNamed[IPlugin, Named("core")]) -> list[str]:
+        def process_core(plugins: InjectAll[IPlugin, Named("core")]) -> list[str]:
             return [p.execute() for p in plugins]
 
         container = Container()

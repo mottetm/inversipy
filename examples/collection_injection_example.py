@@ -2,21 +2,18 @@
 
 This example demonstrates:
 - Registering multiple implementations of an interface
-- Collection injection with InjectAll
-- Named collection injection with InjectAllNamed
+- Collection injection with InjectAll[T]
+- Named collection injection with InjectAll[T, Named("x")]
 - Using get_all() for programmatic collection resolution
 - Plugin system pattern with grouped plugins
 """
 
 from inversipy import (
     Container,
-    InjectAll,
-    InjectAllNamed,
     Injectable,
+    InjectAll,
     Named,
-    Scopes,
 )
-
 
 # =============================================================================
 # Plugin Interface and Implementations
@@ -100,8 +97,8 @@ class PluginManager(Injectable):
 class GroupedPluginManager(Injectable):
     """Manager that uses plugins grouped by category."""
 
-    core_plugins: InjectAllNamed[IPlugin, Named("core")]
-    optional_plugins: InjectAllNamed[IPlugin, Named("optional")]
+    core_plugins: InjectAll[IPlugin, Named("core")]
+    optional_plugins: InjectAll[IPlugin, Named("optional")]
 
     def run_core(self) -> list[str]:
         """Execute only core plugins."""
@@ -157,7 +154,7 @@ def basic_collection_example() -> None:
 
 
 def named_collection_example() -> None:
-    """Demonstrate named collection injection with InjectAllNamed."""
+    """Demonstrate named collection injection with InjectAll."""
     print("\n=== Named Collection Injection ===\n")
 
     container = Container()
@@ -238,7 +235,7 @@ def run_function_example() -> None:
     # Named collection in function
     container.register(IPlugin, AuthPlugin, name="critical")
 
-    def process_critical(plugins: InjectAllNamed[IPlugin, Named("critical")]) -> str:
+    def process_critical(plugins: InjectAll[IPlugin, Named("critical")]) -> str:
         return f"Critical plugins: {len(plugins)}"
 
     result = container.run(process_critical)

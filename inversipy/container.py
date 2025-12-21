@@ -938,7 +938,8 @@ class Container:
                     inject_all_info = self._extract_inject_all_info(param_type)
                     if inject_all_info is not None:
                         item_type, coll_name = inject_all_info
-                        resolved_kwargs[param_name] = await self.get_all_async(item_type, name=coll_name)
+                        all_instances = await self.get_all_async(item_type, name=coll_name)
+                        resolved_kwargs[param_name] = all_instances
                         continue
 
                     # Check for Inject[T, Named(...)] annotations

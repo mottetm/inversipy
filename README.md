@@ -448,10 +448,10 @@ results = manager.run_all()  # ['PluginA executed', 'PluginB executed']
 
 ### Named Collection Injection
 
-Combine named dependencies with collection injection using `InjectAllNamed`:
+Combine named dependencies with collection injection using `InjectAll[T, Named("x")]`:
 
 ```python
-from inversipy import Container, InjectAllNamed, Named, Injectable
+from inversipy import Container, InjectAll, Named, Injectable
 
 # Register plugins in named groups
 container = Container()
@@ -468,8 +468,8 @@ With property injection:
 
 ```python
 class PluginManager(Injectable):
-    core_plugins: InjectAllNamed[IPlugin, Named("core")]
-    optional_plugins: InjectAllNamed[IPlugin, Named("optional")]
+    core_plugins: InjectAll[IPlugin, Named("core")]
+    optional_plugins: InjectAll[IPlugin, Named("optional")]
 
     def run_core(self) -> list[str]:
         return [p.execute() for p in self.core_plugins]

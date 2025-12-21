@@ -29,14 +29,11 @@ _inject_all_marker = _InjectAllMarker()
 
 type Inject[T, *Ts] = Annotated[T, _inject_marker, *Ts]
 
-type InjectAll[T] = Annotated[list[T], _inject_all_marker]
-
-type InjectAllNamed[T, N] = Annotated[list[T], _inject_all_marker, N]
+type InjectAll[T, *Ts] = Annotated[list[T], _inject_all_marker, *Ts]
 
 # Store reference to the Inject TypeAliasType for runtime checks
 _InjectAliasType = Inject  # type: ignore[type-arg]
 _InjectAllAliasType = InjectAll  # type: ignore[type-arg]
-_InjectAllNamedAliasType = InjectAllNamed  # type: ignore[type-arg]
 """Type alias for dependency injection with optional qualifiers.
 
 Use Inject[T] to mark class attributes or function parameters for injection.
@@ -125,25 +122,19 @@ class Injectable:
         for attr_name, annotation in annotations.items():
             origin = get_origin(annotation)
 
-            # Check if this uses the InjectAllNamed TypeAliasType (Python 3.12+)
-            if origin is _InjectAllNamedAliasType:
+            # Check if this uses the InjectAll TypeAliasType (Python 3.12+)
+            # Handles both InjectAll[T] and InjectAll[T, Named("x")]
+            if origin is _InjectAllAliasType:
                 args = get_args(annotation)
                 if args:
-                    # First arg is the item type, second is Named qualifier
+                    # First arg is the item type
                     item_type = args[0]
+                    # Remaining args are qualifiers (e.g., Named)
                     named_qualifier: str | None = None
                     for arg in args[1:]:
                         if isinstance(arg, Named):
                             named_qualifier = arg.name
                     inject_all_fields[attr_name] = (item_type, named_qualifier)
-                continue
-
-            # Check if this uses the InjectAll TypeAliasType (Python 3.12+)
-            if origin is _InjectAllAliasType:
-                args = get_args(annotation)
-                if args:
-                    # First arg is the item type, no name for unnamed
-                    inject_all_fields[attr_name] = (args[0], None)
                 continue
 
             # Check if this uses the Inject TypeAliasType (Python 3.12+)
@@ -234,8 +225,9 @@ class Injectable:
             new_init = make_init(param_names)
 
             # Set proper annotations on the function
+            field_types = [t for t, _ in inject_fields.values()]
             init_annotations: dict[str, Any] = {
-                name: typ for name, typ in zip(list(inject_fields.keys()), [t for t, _ in inject_fields.values()])
+                name: typ for name, typ in zip(list(inject_fields.keys()), field_types)
             }
             # Add inject_all fields with list[T] annotation
             for name, (item_type, _) in inject_all_fields.items():
@@ -344,22 +336,22 @@ def extract_inject_all_type(type_hint: Any) -> type[Any] | None:
 
 
 def extract_inject_all_info(type_hint: Any) -> tuple[type[Any], str | None] | None:
-    """Extract item type and optional name from InjectAll or InjectAllNamed annotation.
+    """Extract item type and optional name from InjectAll annotation.
 
     This helper function analyzes a type hint to determine if it's an InjectAll
-    or InjectAllNamed annotation and extracts the collection item type and optional name.
+    annotation and extracts the collection item type and optional name.
 
     Args:
         type_hint: The type annotation to analyze
 
     Returns:
-        A tuple of (item_type, name | None) if this is InjectAll/InjectAllNamed, None otherwise.
+        A tuple of (item_type, name | None) if this is InjectAll, None otherwise.
 
     Examples:
         >>> extract_inject_all_info(InjectAll[IPlugin])
         (IPlugin, None)
 
-        >>> extract_inject_all_info(InjectAllNamed[IPlugin, Named("core")])
+        >>> extract_inject_all_info(InjectAll[IPlugin, Named("core")])
         (IPlugin, "core")
 
         >>> extract_inject_all_info(list[IPlugin])
@@ -367,8 +359,9 @@ def extract_inject_all_info(type_hint: Any) -> tuple[type[Any], str | None] | No
     """
     origin = get_origin(type_hint)
 
-    # Check if this uses the InjectAllNamed TypeAliasType (Python 3.12+)
-    if origin is _InjectAllNamedAliasType:
+    # Check if this uses the InjectAll TypeAliasType (Python 3.12+)
+    # Handles both InjectAll[T] and InjectAll[T, Named("x")]
+    if origin is _InjectAllAliasType:
         args = get_args(type_hint)
         if args:
             item_type = args[0]
@@ -377,13 +370,6 @@ def extract_inject_all_info(type_hint: Any) -> tuple[type[Any], str | None] | No
                 if isinstance(arg, Named):
                     name = arg.name
             return (item_type, name)
-        return None
-
-    # Check if this uses the InjectAll TypeAliasType (Python 3.12+)
-    if origin is _InjectAllAliasType:
-        args = get_args(type_hint)
-        if args:
-            return (args[0], None)
         return None
 
     # Also support raw Annotated[list[T], _InjectAllMarker, ...] for compatibility
