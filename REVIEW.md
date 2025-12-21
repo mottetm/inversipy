@@ -1,4 +1,4 @@
-# Code Review: Named Dependencies Feature (Round 2)
+# Code Review: Named Dependencies Feature (Round 3 - Multi-Persona)
 
 **Branch:** `claude/implement-named-dependencies-BOhgM`
 **Commit:** `320d7f8`
@@ -8,100 +8,121 @@
 
 ## Overview
 
-This PR implements **named dependencies** (qualifiers) to support registering and resolving multiple implementations of the same interface. This is a common DI pattern for scenarios like primary/replica databases, different cache implementations, etc.
+This PR implements **named dependencies** (qualifiers) to support registering and resolving multiple implementations of the same interface.
 
 ---
 
-## Issues Addressed Since Last Review
+## BLOCKING ISSUES
 
-| Issue | Status | How Fixed |
-|-------|--------|-----------|
-| `has()` doesn't check modules for named deps | **Fixed** | Now passes `name` to `module.has()` |
-| Validation ignores named deps in constructors | **Partial** | Uses `extract_inject_info()` but cycle detection broken |
-| `export()` doesn't support named deps | **Fixed** | Added `export_named(interface, name)` method |
-| No circular dep tests with named bindings | **Partial** | Tests runtime detection, not `validate()` |
-| `Named("")` accepted (no validation) | **Fixed** | Raises `ValueError` for empty/whitespace |
-| `get_type_from_key` lost error handling | **Fixed** | Restored `ValueError` for invalid keys |
+### 1. `_detect_cycles()` Skips Named Bindings
 
----
-
-## NEW BLOCKING ISSUE
-
-### `_detect_cycles()` Skips Named Bindings Entirely
-
-**Severity:** High
+**Severity:** High | **Persona:** Maintainer
 
 In `container.py` line 1082:
 ```python
 if binding.implementation is not None and isinstance(key, type):
-    deps = self._get_implementation_dependencies(binding.implementation)
 ```
 
-When the key is a tuple like `(IDatabase, "special")`, `isinstance(key, type)` returns `False`, so **named bindings are completely excluded from cycle detection**.
+When key is `(IDatabase, "special")`, `isinstance(key, type)` is `False`, so named bindings are **excluded from cycle detection**.
 
-**Proof:**
 ```python
-class ServiceA:
-    def __init__(self, b: Inject[IDatabase, Named("special")]): ...
-
-class ServiceB(IDatabase):
-    def __init__(self, a: ServiceA): ...
-
-container.register(ServiceA)
-container.register(IDatabase, ServiceB, name="special")
-container.register(ServiceB)
-
-container.validate()  # PASSES - does not detect cycle!
+container.validate()  # PASSES - misses cycle!
 container.get(ServiceA)  # Raises CircularDependencyError
 ```
 
-**Impact:** Users relying on `validate()` to catch cycles before runtime will get false confidence. The cycle only manifests when `get()` is called.
+---
 
-**Fix:** Update `_detect_cycles()` to handle tuple keys:
+### 2. `run()` and `run_async()` Don't Support Named Dependencies
+
+**Severity:** High | **Persona:** User
+
+The `run()` method doesn't handle `Inject[T, Named(...)]`:
+
 ```python
-if binding.implementation is not None:
-    # Extract type from key (handles both type and (type, name) tuple)
-    key_type = get_type_from_key(key) if isinstance(key, tuple) else key
-    if isinstance(key_type, type):
-        deps = self._get_implementation_dependencies(binding.implementation)
-        ...
+container.register(IDatabase, PostgresDB, name='primary')
+
+def my_func(db: Inject[IDatabase, Named('primary')]) -> str:
+    return db.query('SELECT 1')
+
+container.run(my_func)  # FAILS: Cannot resolve parameter 'db'
 ```
+
+**Root cause:** `run()` uses `get_type_hints(func)` without `include_extras=True` and doesn't call `extract_inject_info()`.
+
+**Location:** `container.py` lines 678-710 (`run`) and 723-790 (`run_async`)
+
+---
+
+## MEDIUM ISSUES
+
+### 3. `ModuleBuilder` Missing `export_named()`
+
+**Severity:** Medium | **Persona:** API Designer
+
+`Module` has `export_named()` but `ModuleBuilder` doesn't:
+
+```python
+module = Module("test")
+module.export_named(IDatabase, "primary")  # Works
+
+builder = ModuleBuilder("test")
+builder.export_named  # AttributeError!
+```
+
+**Impact:** API inconsistency. Users of `ModuleBuilder` can't export named deps.
+
+---
+
+### 4. Thread/Async Safety (Pre-existing)
+
+**Severity:** Medium | **Persona:** Performance Engineer
+
+The `_resolution_stack` is instance-level, not thread-local or contextvars-based:
+
+```python
+# Concurrent access causes false circular dependency errors
+threads = [threading.Thread(target=lambda: container.get(SlowService)) for _ in range(5)]
+# -> Raises CircularDependencyError falsely
+```
+
+Same issue with async:
+```python
+await asyncio.gather(*[container.get_async(SlowService) for _ in range(5)])
+# -> Raises CircularDependencyError falsely
+```
+
+**Note:** This is pre-existing, not introduced by this PR, but named dependencies don't fix it either.
+
+---
+
+## Issues Addressed Since Round 1
+
+| Issue | Status |
+|-------|--------|
+| `has()` doesn't check modules for named deps | **Fixed** |
+| Validation ignores named deps in constructors | **Partial** (cycle detection broken) |
+| `export()` doesn't support named deps | **Fixed** |
+| `Named("")` accepted | **Fixed** |
+| `get_type_from_key` error handling | **Fixed** |
 
 ---
 
 ## Strengths
 
-### 1. Clean API Design
-
-The API follows intuitive patterns consistent with other DI frameworks.
-
-### 2. Excellent Type Annotation Integration
-
-The `Inject[T, Named("...")]` syntax is elegant.
-
-### 3. Runtime Circular Dependency Detection Works
-
-The runtime detection via `get()` correctly catches cycles - only `validate()` is broken.
-
-### 4. Backward Compatibility
-
-Fully backward compatible with existing code.
+1. **Clean API** - Intuitive patterns consistent with other DI frameworks
+2. **Type Integration** - `Inject[T, Named("...")]` is elegant
+3. **Runtime Detection Works** - `get()` correctly catches cycles
+4. **Backward Compatible** - Existing code unchanged
+5. **Mixed Named/Unnamed** - Same type with different names works correctly
 
 ---
 
-## Remaining Minor Issues
+## Minor Issues (Non-blocking)
 
-### 1. Mypy Plugin Has No Tests
-
-**Severity:** Low
-
-### 2. Docstring Placement
-
-**Severity:** Low
-
-### 3. Injectable Signature Loses Qualifier Info
-
-**Severity:** Low
+1. Mypy plugin has no tests
+2. Docstring on `_InjectAliasType` not on `Inject`
+3. Injectable signature loses qualifier info
+4. Duplicate named registration silently overwrites (expected but undocumented)
 
 ---
 
@@ -109,10 +130,10 @@ Fully backward compatible with existing code.
 
 | Category | Count |
 |----------|-------|
-| Blocking Issues | **1** |
-| Non-blocking Issues | 3 (all Low severity) |
-| Tests Added | 8 new tests |
-| Total Test Coverage | 157 tests passing |
+| Blocking Issues | **2** |
+| Medium Issues | **2** |
+| Low Issues | 4 |
+| Tests Passing | 157 |
 
 ---
 
@@ -120,15 +141,17 @@ Fully backward compatible with existing code.
 
 **NOT ready to merge.**
 
-The `_detect_cycles()` method completely ignores named bindings, making `validate()` unreliable for detecting circular dependencies when named dependencies are involved. The test `test_circular_dependency_with_named_bindings` only tests runtime detection, masking this bug.
-
 ### Required Before Merge
 
-1. Fix `_detect_cycles()` to include named bindings in the dependency graph
-2. Add test that `validate()` (not just `get()`) detects cycles with named deps
+1. Fix `_detect_cycles()` to include named bindings
+2. Fix `run()` and `run_async()` to use `extract_inject_info()`
+3. Add `export_named()` to `ModuleBuilder`
+4. Add tests:
+   - `validate()` detects cycles with named deps
+   - `run()` works with `Inject[T, Named(...)]`
 
-### Follow-up PRs (Non-blocking)
+### Follow-up PRs
 
-1. Mypy plugin tests
-2. Docstring placement
-3. Injectable signature info
+1. Thread/async safety for `_resolution_stack` (use `contextvars`)
+2. Mypy plugin tests
+3. Document that duplicate registration overwrites
