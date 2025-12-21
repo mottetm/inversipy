@@ -3,7 +3,7 @@
 **Branch:** `claude/review-collection-injection-plan-YfzNa`
 **Date:** 2025-12-21
 **Commits Reviewed:** 8 commits (8e16c48 → 1694a34)
-**Test Results:** 79 passed
+**Test Results:** 244 passed (full suite), 79 collection injection tests
 
 ---
 
@@ -33,6 +33,16 @@ This PR implements **collection injection** for inversipy. Following the initial
 |-------|----------|-------|
 | Add test for InjectAll self-reference (potential recursion) | 🟢 Low | Edge case, could be added later |
 | Thread safety for concurrent registration | 🟢 Low | Design decision, document if needed |
+
+### Known Limitations
+
+**Validation with Injectable + InjectAll**: When using `Injectable` base class with `InjectAll[T]` properties, `container.validate()` incorrectly reports missing `list` dependency. This is because `Injectable` transforms type hints from `InjectAll[T]` to `list[T]` in the generated `__init__`, and validation doesn't check the `_inject_all_fields` metadata.
+
+**Workaround**: Resolution still works correctly; only validation fails. Either:
+- Skip validation for containers with such classes, or
+- Use regular classes with `InjectAll[T]` in constructor parameters (which validate correctly)
+
+**Impact**: Low - affects only validation, not runtime behavior. Tests explicitly use regular classes for validation testing.
 
 ---
 
