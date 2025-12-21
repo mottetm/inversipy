@@ -14,6 +14,7 @@ from .binding_strategies import (
     SyncSingletonStrategy,
     SyncTransientStrategy,
 )
+from .decorators import extract_inject_info
 from .exceptions import (
     CircularDependencyError,
     DependencyNotFoundError,
@@ -22,7 +23,22 @@ from .exceptions import (
     ValidationError,
 )
 from .scopes import Scopes
-from .types import DependencyKey, Factory, ModuleProtocol
+from .types import DependencyKey, Factory, ModuleProtocol, get_type_from_key, make_key
+
+
+def _format_dependency(dep_type: type, name: str | None = None) -> str:
+    """Format a dependency type and optional name for error messages.
+
+    Args:
+        dep_type: The dependency type
+        name: Optional name qualifier
+
+    Returns:
+        Formatted string like "IDatabase" or "IDatabase[name='primary']"
+    """
+    if name:
+        return f"{dep_type.__name__}[name='{name}']"
+    return dep_type.__name__
 
 
 class Binding:
@@ -138,6 +154,8 @@ class Binding:
     def _call_factory_with_deps(self, container: "Container", factory: Callable[..., Any]) -> Any:
         """Call a factory function, resolving its dependencies from the container.
 
+        Supports named dependencies via Inject[Type, Named("qualifier")] annotations.
+
         Args:
             container: Container to resolve dependencies from
             factory: Factory function to call
@@ -150,7 +168,7 @@ class Binding:
         """
         try:
             sig = inspect.signature(factory)
-            type_hints = get_type_hints(factory)
+            type_hints = get_type_hints(factory, include_extras=True)
 
             kwargs: dict[str, Any] = {}
             for param_name, param in sig.parameters.items():
@@ -159,14 +177,28 @@ class Binding:
 
                 param_type = type_hints.get(param_name)
                 if param_type is not None:
-                    try:
-                        kwargs[param_name] = container.get(param_type)
-                    except DependencyNotFoundError:
-                        if param.default is inspect.Parameter.empty:
-                            raise ResolutionError(
-                                f"Cannot resolve factory parameter '{param_name}' "
-                                f"of type {param_type} for {self.key}"
-                            )
+                    # Check for Inject annotation with optional Named qualifier
+                    inject_info = extract_inject_info(param_type)
+                    if inject_info:
+                        actual_type, dep_name = inject_info
+                        try:
+                            kwargs[param_name] = container.get(actual_type, name=dep_name)
+                        except DependencyNotFoundError:
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve factory parameter '{param_name}' "
+                                    f"of type {_format_dependency(actual_type, dep_name)} "
+                                    f"for {self.key}"
+                                )
+                    else:
+                        try:
+                            kwargs[param_name] = container.get(param_type)
+                        except DependencyNotFoundError:
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve factory parameter '{param_name}' "
+                                    f"of type {param_type} for {self.key}"
+                                )
                 elif param.default is inspect.Parameter.empty:
                     raise ResolutionError(
                         f"Factory parameter '{param_name}' has no type hint "
@@ -223,6 +255,8 @@ class Binding:
     ) -> Any:
         """Call a factory function asynchronously, resolving its dependencies from the container.
 
+        Supports named dependencies via Inject[Type, Named("qualifier")] annotations.
+
         Args:
             container: Container to resolve dependencies from
             factory: Factory function to call
@@ -235,7 +269,7 @@ class Binding:
         """
         try:
             sig = inspect.signature(factory)
-            type_hints = get_type_hints(factory)
+            type_hints = get_type_hints(factory, include_extras=True)
 
             kwargs: dict[str, Any] = {}
             for param_name, param in sig.parameters.items():
@@ -244,14 +278,30 @@ class Binding:
 
                 param_type = type_hints.get(param_name)
                 if param_type is not None:
-                    try:
-                        kwargs[param_name] = await container.get_async(param_type)
-                    except DependencyNotFoundError:
-                        if param.default is inspect.Parameter.empty:
-                            raise ResolutionError(
-                                f"Cannot resolve factory parameter '{param_name}' "
-                                f"of type {param_type} for {self.key}"
+                    # Check for Inject annotation with optional Named qualifier
+                    inject_info = extract_inject_info(param_type)
+                    if inject_info:
+                        actual_type, dep_name = inject_info
+                        try:
+                            kwargs[param_name] = await container.get_async(
+                                actual_type, name=dep_name
                             )
+                        except DependencyNotFoundError:
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve factory parameter '{param_name}' "
+                                    f"of type {_format_dependency(actual_type, dep_name)} "
+                                    f"for {self.key}"
+                                )
+                    else:
+                        try:
+                            kwargs[param_name] = await container.get_async(param_type)
+                        except DependencyNotFoundError:
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve factory parameter '{param_name}' "
+                                    f"of type {param_type} for {self.key}"
+                                )
                 elif param.default is inspect.Parameter.empty:
                     raise ResolutionError(
                         f"Factory parameter '{param_name}' has no type hint "
@@ -293,7 +343,8 @@ class Container:
         self._bindings: dict[DependencyKey, Binding] = {}
         self._modules: list[ModuleProtocol] = []  # List of registered modules
         self._parent = parent
-        self._resolution_stack: list[type[Any]] = []
+        # Resolution stack now tracks DependencyKey (type or (type, name) tuple)
+        self._resolution_stack: list[DependencyKey] = []
 
     @property
     def name(self) -> str:
@@ -312,6 +363,7 @@ class Container:
         factory: Factory[T] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
         instance: T | None = None,
+        name: str | None = None,
     ) -> "Container":
         """Register a dependency in the container.
 
@@ -321,29 +373,44 @@ class Container:
             factory: Optional factory function
             scope: Scope for the dependency lifecycle
             instance: Optional pre-created instance
+            name: Optional name qualifier for named bindings
 
         Returns:
             Self for chaining
 
         Raises:
             RegistrationError: If registration parameters are invalid
+
+        Example:
+            # Unnamed registration (default)
+            container.register(IDatabase, PostgresDB)
+
+            # Named registration for multiple implementations
+            container.register(IDatabase, PostgresDB, name="primary")
+            container.register(IDatabase, MySQLDB, name="replica")
         """
         # If no implementation or factory provided, use interface as implementation
         if implementation is None and factory is None and instance is None:
             implementation = interface
 
+        key = make_key(interface, name)
+
         binding = Binding(
-            key=interface,
+            key=key,
             factory=factory,
             implementation=implementation,
             scope=scope,
             instance=instance,
         )
-        self._bindings[interface] = binding
+        self._bindings[key] = binding
         return self
 
     def register_factory[T](
-        self, interface: type[T], factory: Factory[T], scope: Scopes = Scopes.TRANSIENT
+        self,
+        interface: type[T],
+        factory: Factory[T],
+        scope: Scopes = Scopes.TRANSIENT,
+        name: str | None = None,
     ) -> "Container":
         """Register a factory function for a dependency.
 
@@ -351,23 +418,27 @@ class Container:
             interface: The interface/type to register
             factory: Factory function to create instances
             scope: Scope for the dependency lifecycle
+            name: Optional name qualifier for named bindings
 
         Returns:
             Self for chaining
         """
-        return self.register(interface, factory=factory, scope=scope)
+        return self.register(interface, factory=factory, scope=scope, name=name)
 
-    def register_instance[T](self, interface: type[T], instance: T) -> "Container":
+    def register_instance[T](
+        self, interface: type[T], instance: T, name: str | None = None
+    ) -> "Container":
         """Register a pre-created instance.
 
         Args:
             interface: The interface/type to register
             instance: Pre-created instance
+            name: Optional name qualifier for named bindings
 
         Returns:
             Self for chaining
         """
-        return self.register(interface, instance=instance, scope=Scopes.SINGLETON)
+        return self.register(interface, instance=instance, scope=Scopes.SINGLETON, name=name)
 
     def register_module(self, module: ModuleProtocol) -> "Container":
         """Register a module as a provider of dependencies.
@@ -393,7 +464,7 @@ class Container:
         self._modules.append(module)
         return self
 
-    def get[T](self, interface: type[T]) -> T:
+    def get[T](self, interface: type[T], name: str | None = None) -> T:
         """Resolve a dependency from the container.
 
         Resolution order:
@@ -403,6 +474,7 @@ class Container:
 
         Args:
             interface: The type to resolve
+            name: Optional name qualifier for named bindings
 
         Returns:
             Resolved instance
@@ -410,14 +482,26 @@ class Container:
         Raises:
             DependencyNotFoundError: If dependency is not registered
             CircularDependencyError: If circular dependency is detected
+
+        Example:
+            # Resolve unnamed dependency
+            db = container.get(IDatabase)
+
+            # Resolve named dependency
+            primary = container.get(IDatabase, name="primary")
+            replica = container.get(IDatabase, name="replica")
         """
+        key = make_key(interface, name)
+
         # Check for circular dependencies
-        if interface in self._resolution_stack:
-            self._resolution_stack.append(interface)
-            raise CircularDependencyError(self._resolution_stack[:])
+        if key in self._resolution_stack:
+            self._resolution_stack.append(key)
+            # Extract types for error message
+            cycle_types = [get_type_from_key(k) for k in self._resolution_stack]
+            raise CircularDependencyError(cycle_types)
 
         # Try to find binding in this container
-        binding = self._bindings.get(interface)
+        binding = self._bindings.get(key)
 
         # If not found, try registered modules
         if binding is None:
@@ -425,7 +509,7 @@ class Container:
                 try:
                     # Try to resolve from the module
                     # The module will enforce its own public/private access rules
-                    instance = module.get(interface)
+                    instance = module.get(interface, name=name)
                     return instance
                 except DependencyNotFoundError:
                     # This module doesn't have it (or it's private), try next module
@@ -433,14 +517,14 @@ class Container:
 
         # If not found, try parent container
         if binding is None and self._parent is not None:
-            return self._parent.get(interface)
+            return self._parent.get(interface, name=name)
 
         # If still not found, raise error
         if binding is None:
-            raise DependencyNotFoundError(interface, self._name)
+            raise DependencyNotFoundError(interface, self._name, name=name)
 
         # Add to resolution stack
-        self._resolution_stack.append(interface)
+        self._resolution_stack.append(key)
 
         try:
             instance = binding.create_instance(self)
@@ -449,21 +533,22 @@ class Container:
             # Remove from resolution stack
             self._resolution_stack.pop()
 
-    def try_get[T](self, interface: type[T]) -> T | None:
+    def try_get[T](self, interface: type[T], name: str | None = None) -> T | None:
         """Try to resolve a dependency, returning None if not found.
 
         Args:
             interface: The type to resolve
+            name: Optional name qualifier for named bindings
 
         Returns:
             Resolved instance or None
         """
         try:
-            return self.get(interface)
+            return self.get(interface, name=name)
         except DependencyNotFoundError:
             return None
 
-    async def get_async[T](self, interface: type[T]) -> T:
+    async def get_async[T](self, interface: type[T], name: str | None = None) -> T:
         """Resolve a dependency from the container asynchronously.
 
         This method supports async factories and async scopes. It follows the same
@@ -474,6 +559,7 @@ class Container:
 
         Args:
             interface: The type to resolve
+            name: Optional name qualifier for named bindings
 
         Returns:
             Resolved instance
@@ -482,20 +568,23 @@ class Container:
             DependencyNotFoundError: If dependency is not registered
             CircularDependencyError: If circular dependency is detected
         """
+        key = make_key(interface, name)
+
         # Check for circular dependencies
-        if interface in self._resolution_stack:
-            self._resolution_stack.append(interface)
-            raise CircularDependencyError(self._resolution_stack[:])
+        if key in self._resolution_stack:
+            self._resolution_stack.append(key)
+            cycle_types = [get_type_from_key(k) for k in self._resolution_stack]
+            raise CircularDependencyError(cycle_types)
 
         # Try to find binding in this container
-        binding = self._bindings.get(interface)
+        binding = self._bindings.get(key)
 
         # If not found, try registered modules
         if binding is None:
             for module in self._modules:
                 try:
                     # Try to resolve from the module asynchronously
-                    instance = await module.get_async(interface)
+                    instance = await module.get_async(interface, name=name)
                     return instance
                 except DependencyNotFoundError:
                     # This module doesn't have it (or it's private), try next module
@@ -503,14 +592,14 @@ class Container:
 
         # If not found, try parent container
         if binding is None and self._parent is not None:
-            return await self._parent.get_async(interface)
+            return await self._parent.get_async(interface, name=name)
 
         # If still not found, raise error
         if binding is None:
-            raise DependencyNotFoundError(interface, self._name)
+            raise DependencyNotFoundError(interface, self._name, name=name)
 
         # Add to resolution stack
-        self._resolution_stack.append(interface)
+        self._resolution_stack.append(key)
 
         try:
             instance = await binding.create_instance_async(self)
@@ -519,26 +608,29 @@ class Container:
             # Remove from resolution stack
             self._resolution_stack.pop()
 
-    def has(self, interface: type[Any]) -> bool:
+    def has(self, interface: type[Any], name: str | None = None) -> bool:
         """Check if a dependency is registered.
 
         Args:
             interface: The type to check
+            name: Optional name qualifier for named bindings
 
         Returns:
             True if registered, False otherwise
         """
-        if interface in self._bindings:
+        key = make_key(interface, name)
+
+        if key in self._bindings:
             return True
 
         # Check registered modules
         for module in self._modules:
-            if module.has(interface):
+            if module.has(interface, name=name):
                 return True
 
         # Check parent if exists
         if self._parent is not None:
-            return self._parent.has(interface)
+            return self._parent.has(interface, name=name)
 
         return False
 
@@ -578,9 +670,9 @@ class Container:
             ```
         """
         try:
-            # Get type hints for the function
+            # Get type hints for the function (with extras for Annotated support)
             try:
-                type_hints = get_type_hints(func)
+                type_hints = get_type_hints(func, include_extras=True)
             except Exception:
                 type_hints = {}
 
@@ -605,15 +697,28 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
-                    try:
-                        resolved_kwargs[param_name] = self.get(param_type)
-                    except DependencyNotFoundError:
-                        # If resolution fails and no default, let the error propagate
-                        if param.default is inspect.Parameter.empty:
-                            raise ResolutionError(
-                                f"Cannot resolve parameter '{param_name}' of type "
-                                f"'{param_type}' for function '{func.__name__}'"
-                            )
+                    # Check for Inject[T, Named(...)] annotations
+                    inject_info = extract_inject_info(param_type)
+                    if inject_info:
+                        actual_type, dep_name = inject_info
+                        try:
+                            resolved_kwargs[param_name] = self.get(actual_type, name=dep_name)
+                        except DependencyNotFoundError:
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve parameter '{param_name}' of type "
+                                    f"{_format_dependency(actual_type, dep_name)} "
+                                    f"for function '{func.__name__}'"
+                                )
+                    else:
+                        try:
+                            resolved_kwargs[param_name] = self.get(param_type)
+                        except DependencyNotFoundError:
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve parameter '{param_name}' of type "
+                                    f"'{param_type}' for function '{func.__name__}'"
+                                )
                 elif param.default is inspect.Parameter.empty:
                     raise ResolutionError(
                         f"Parameter '{param_name}' of function '{func.__name__}' "
@@ -665,9 +770,9 @@ class Container:
             ```
         """
         try:
-            # Get type hints for the function
+            # Get type hints for the function (with extras for Annotated support)
             try:
-                type_hints = get_type_hints(func)
+                type_hints = get_type_hints(func, include_extras=True)
             except Exception:
                 type_hints = {}
 
@@ -692,15 +797,30 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
-                    try:
-                        resolved_kwargs[param_name] = await self.get_async(param_type)
-                    except DependencyNotFoundError:
-                        # If resolution fails and no default, let the error propagate
-                        if param.default is inspect.Parameter.empty:
-                            raise ResolutionError(
-                                f"Cannot resolve parameter '{param_name}' of type "
-                                f"'{param_type}' for function '{func.__name__}'"
+                    # Check for Inject[T, Named(...)] annotations
+                    inject_info = extract_inject_info(param_type)
+                    if inject_info:
+                        actual_type, dep_name = inject_info
+                        try:
+                            resolved_kwargs[param_name] = await self.get_async(
+                                actual_type, name=dep_name
                             )
+                        except DependencyNotFoundError:
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve parameter '{param_name}' of type "
+                                    f"{_format_dependency(actual_type, dep_name)} "
+                                    f"for function '{func.__name__}'"
+                                )
+                    else:
+                        try:
+                            resolved_kwargs[param_name] = await self.get_async(param_type)
+                        except DependencyNotFoundError:
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve parameter '{param_name}' of type "
+                                    f"'{param_type}' for function '{func.__name__}'"
+                                )
                 elif param.default is inspect.Parameter.empty:
                     raise ResolutionError(
                         f"Parameter '{param_name}' of function '{func.__name__}' "
@@ -718,6 +838,9 @@ class Container:
     def _create_instance[T](self, cls: type[T]) -> T:
         """Create an instance of a class, resolving its dependencies.
 
+        Supports both regular constructor injection and Injectable classes with
+        named dependencies via Inject[Type, Named("qualifier")].
+
         Args:
             cls: The class to instantiate
 
@@ -728,12 +851,31 @@ class Container:
             ResolutionError: If instance creation fails
         """
         try:
-            # Get the __init__ method
+            # Check if this is an Injectable class with named dependency metadata
+            inject_fields: dict[str, tuple[type, str | None]] | None = getattr(
+                cls, "_inject_fields", None
+            )
+
+            if inject_fields:
+                # Injectable class - use the stored field metadata
+                kwargs: dict[str, Any] = {}
+                for field_name, (field_type, dep_name) in inject_fields.items():
+                    try:
+                        kwargs[field_name] = self.get(field_type, name=dep_name)
+                    except DependencyNotFoundError:
+                        raise ResolutionError(
+                            f"Cannot resolve dependency '{field_name}' of type "
+                            f"{_format_dependency(field_type, dep_name)} "
+                            f"for class '{cls.__name__}'"
+                        )
+                return cls(**kwargs)
+
+            # Regular class - use constructor inspection
             init_method = cls.__init__
 
-            # Get type hints for the constructor
+            # Get type hints for the constructor (with extras for Annotated support)
             try:
-                type_hints = get_type_hints(init_method)
+                type_hints = get_type_hints(init_method, include_extras=True)
             except Exception:
                 # If we can't get type hints, try without dependencies
                 type_hints = {}
@@ -745,7 +887,7 @@ class Container:
             sig = inspect.signature(init_method)
 
             # Resolve dependencies
-            kwargs: dict[str, Any] = {}
+            kwargs = {}
             for param_name, param in sig.parameters.items():
                 if param_name == "self":
                     continue
@@ -758,16 +900,30 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
-                    # Try to resolve from container
-                    try:
-                        kwargs[param_name] = self.get(param_type)
-                    except DependencyNotFoundError:
-                        # Check if parameter has a default value
-                        if param.default is inspect.Parameter.empty:
-                            raise ResolutionError(
-                                f"Cannot resolve parameter '{param_name}' of type "
-                                f"'{param_type}' for class '{cls.__name__}'"
-                            )
+                    # Check for Inject annotation with optional Named qualifier
+                    inject_info = extract_inject_info(param_type)
+                    if inject_info:
+                        actual_type, dep_name = inject_info
+                        try:
+                            kwargs[param_name] = self.get(actual_type, name=dep_name)
+                        except DependencyNotFoundError:
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve parameter '{param_name}' of type "
+                                    f"{_format_dependency(actual_type, dep_name)} "
+                                    f"for class '{cls.__name__}'"
+                                )
+                    else:
+                        # Regular type hint resolution
+                        try:
+                            kwargs[param_name] = self.get(param_type)
+                        except DependencyNotFoundError:
+                            # Check if parameter has a default value
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve parameter '{param_name}' of type "
+                                    f"'{param_type}' for class '{cls.__name__}'"
+                                )
                 elif param.default is inspect.Parameter.empty:
                     raise ResolutionError(
                         f"Parameter '{param_name}' of class '{cls.__name__}' "
@@ -785,6 +941,9 @@ class Container:
     async def _create_instance_async[T](self, cls: type[T]) -> T:
         """Create an instance of a class asynchronously, resolving its dependencies.
 
+        Supports both regular constructor injection and Injectable classes with
+        named dependencies via Inject[Type, Named("qualifier")].
+
         Args:
             cls: The class to instantiate
 
@@ -795,12 +954,31 @@ class Container:
             ResolutionError: If instance creation fails
         """
         try:
-            # Get the __init__ method
+            # Check if this is an Injectable class with named dependency metadata
+            inject_fields: dict[str, tuple[type, str | None]] | None = getattr(
+                cls, "_inject_fields", None
+            )
+
+            if inject_fields:
+                # Injectable class - use the stored field metadata
+                kwargs: dict[str, Any] = {}
+                for field_name, (field_type, dep_name) in inject_fields.items():
+                    try:
+                        kwargs[field_name] = await self.get_async(field_type, name=dep_name)
+                    except DependencyNotFoundError:
+                        raise ResolutionError(
+                            f"Cannot resolve dependency '{field_name}' of type "
+                            f"{_format_dependency(field_type, dep_name)} "
+                            f"for class '{cls.__name__}'"
+                        )
+                return cls(**kwargs)
+
+            # Regular class - use constructor inspection
             init_method = cls.__init__
 
-            # Get type hints for the constructor
+            # Get type hints for the constructor (with extras for Annotated support)
             try:
-                type_hints = get_type_hints(init_method)
+                type_hints = get_type_hints(init_method, include_extras=True)
             except Exception:
                 # If we can't get type hints, try without dependencies
                 type_hints = {}
@@ -812,7 +990,7 @@ class Container:
             sig = inspect.signature(init_method)
 
             # Resolve dependencies asynchronously
-            kwargs: dict[str, Any] = {}
+            kwargs = {}
             for param_name, param in sig.parameters.items():
                 if param_name == "self":
                     continue
@@ -825,16 +1003,30 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
-                    # Try to resolve from container asynchronously
-                    try:
-                        kwargs[param_name] = await self.get_async(param_type)
-                    except DependencyNotFoundError:
-                        # Check if parameter has a default value
-                        if param.default is inspect.Parameter.empty:
-                            raise ResolutionError(
-                                f"Cannot resolve parameter '{param_name}' of type "
-                                f"'{param_type}' for class '{cls.__name__}'"
-                            )
+                    # Check for Inject annotation with optional Named qualifier
+                    inject_info = extract_inject_info(param_type)
+                    if inject_info:
+                        actual_type, dep_name = inject_info
+                        try:
+                            kwargs[param_name] = await self.get_async(actual_type, name=dep_name)
+                        except DependencyNotFoundError:
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve parameter '{param_name}' of type "
+                                    f"{_format_dependency(actual_type, dep_name)} "
+                                    f"for class '{cls.__name__}'"
+                                )
+                    else:
+                        # Regular type hint resolution
+                        try:
+                            kwargs[param_name] = await self.get_async(param_type)
+                        except DependencyNotFoundError:
+                            # Check if parameter has a default value
+                            if param.default is inspect.Parameter.empty:
+                                raise ResolutionError(
+                                    f"Cannot resolve parameter '{param_name}' of type "
+                                    f"'{param_type}' for class '{cls.__name__}'"
+                                )
                 elif param.default is inspect.Parameter.empty:
                     raise ResolutionError(
                         f"Parameter '{param_name}' of class '{cls.__name__}' "
@@ -874,7 +1066,7 @@ class Container:
         try:
             init_method = cls.__init__
             try:
-                type_hints = get_type_hints(init_method)
+                type_hints = get_type_hints(init_method, include_extras=True)
             except Exception:
                 return []
 
@@ -892,7 +1084,12 @@ class Container:
 
                 param_type = type_hints.get(param_name)
                 if param_type is not None and param.default is inspect.Parameter.empty:
-                    dependencies.append(param_type)
+                    # Check for Inject[T, Named(...)] and extract actual type
+                    inject_info = extract_inject_info(param_type)
+                    if inject_info:
+                        dependencies.append(inject_info[0])  # Just the type, not name
+                    else:
+                        dependencies.append(param_type)
         except Exception:
             pass
 
@@ -910,7 +1107,9 @@ class Container:
         for key, binding in self._bindings.items():
             if binding.instance is not None or binding.factory is not None:
                 continue
-            if binding.implementation is not None and isinstance(key, type):
+            if binding.implementation is not None:
+                # Extract the type from the key (handles both type and (type, name) tuples)
+                node_type = get_type_from_key(key)
                 deps = self._get_implementation_dependencies(binding.implementation)
                 # Only include dependencies that are registered in this container
                 registered_deps = [
@@ -919,7 +1118,7 @@ class Container:
                     if d in self._bindings
                     or any(d in m._bindings for m in self._modules if hasattr(m, "_bindings"))
                 ]
-                graph[key] = registered_deps
+                graph[node_type] = registered_deps
 
         # Also check modules
         for module in self._modules:
@@ -927,7 +1126,8 @@ class Container:
                 for key, binding in module._bindings.items():
                     if binding.instance is not None or binding.factory is not None:
                         continue
-                    if binding.implementation is not None and isinstance(key, type):
+                    if binding.implementation is not None:
+                        node_type = get_type_from_key(key)
                         deps = self._get_implementation_dependencies(binding.implementation)
                         registered_deps = [
                             d
@@ -938,7 +1138,7 @@ class Container:
                                 d in m._bindings for m in self._modules if hasattr(m, "_bindings")
                             )
                         ]
-                        graph[key] = registered_deps
+                        graph[node_type] = registered_deps
 
         # DFS to detect cycles
         cycles: list[list[type[Any]]] = []
@@ -996,10 +1196,10 @@ class Container:
             if binding.implementation is not None:
                 cls = binding.implementation
                 try:
-                    # Get type hints for the constructor
+                    # Get type hints for the constructor (with extras for Annotated)
                     init_method = cls.__init__
                     try:
-                        type_hints = get_type_hints(init_method)
+                        type_hints = get_type_hints(init_method, include_extras=True)
                     except Exception:
                         continue  # Skip if we can't get type hints
 
@@ -1023,25 +1223,50 @@ class Container:
                         param_type = type_hints.get(param_name)
 
                         if param_type is not None:
-                            # Check if dependency is registered
-                            has_dependency = (
-                                param_type in self._bindings
-                                or any(
-                                    param_type in m._bindings
-                                    for m in self._modules
-                                    if hasattr(m, "_bindings")
-                                )
-                                or (self._parent is not None and self._parent.has(param_type))
-                            )
-                            if not has_dependency:
-                                # Check if parameter has a default
-                                if param.default is inspect.Parameter.empty:
-                                    type_name = getattr(param_type, "__name__", str(param_type))
-                                    errors.append(
-                                        f"Dependency '{cls.__name__}' requires "
-                                        f"'{type_name}' (parameter '{param_name}') "
-                                        f"which is not registered"
+                            # Check for Inject[T, Named(...)] annotations
+                            inject_info = extract_inject_info(param_type)
+                            if inject_info:
+                                actual_type, dep_name = inject_info
+                                dep_key = make_key(actual_type, dep_name)
+                                # Check bindings directly (not has()) to include private deps
+                                has_dependency = (
+                                    dep_key in self._bindings
+                                    or any(
+                                        dep_key in m._bindings
+                                        for m in self._modules
+                                        if hasattr(m, "_bindings")
                                     )
+                                    or (
+                                        self._parent is not None
+                                        and self._parent.has(actual_type, name=dep_name)
+                                    )
+                                )
+                                if not has_dependency:
+                                    if param.default is inspect.Parameter.empty:
+                                        errors.append(
+                                            f"Dependency '{cls.__name__}' requires "
+                                            f"'{_format_dependency(actual_type, dep_name)}' "
+                                            f"(parameter '{param_name}') which is not registered"
+                                        )
+                            else:
+                                # Regular type hint - check if registered
+                                has_dependency = (
+                                    param_type in self._bindings
+                                    or any(
+                                        param_type in m._bindings
+                                        for m in self._modules
+                                        if hasattr(m, "_bindings")
+                                    )
+                                    or (self._parent is not None and self._parent.has(param_type))
+                                )
+                                if not has_dependency:
+                                    if param.default is inspect.Parameter.empty:
+                                        type_name = getattr(param_type, "__name__", str(param_type))
+                                        errors.append(
+                                            f"Dependency '{cls.__name__}' requires "
+                                            f"'{type_name}' (parameter '{param_name}') "
+                                            f"which is not registered"
+                                        )
 
                 except Exception as e:
                     errors.append(f"Failed to validate dependency '{cls.__name__}': {e}")
