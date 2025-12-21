@@ -68,3 +68,28 @@ class ResolutionError(InversipyError):
     """Raised when there's an error during dependency resolution."""
 
     pass
+
+
+class AmbiguousDependencyError(InversipyError):
+    """Raised when multiple implementations exist for a single get() call.
+
+    This error indicates that the container has multiple implementations
+    registered for the requested interface, and it cannot determine which
+    one to return. Use get_all() to retrieve all implementations, or use
+    named bindings to disambiguate.
+    """
+
+    def __init__(
+        self,
+        dependency_type: type[Any],
+        count: int,
+        container_name: str = "container",
+    ) -> None:
+        self.dependency_type = dependency_type
+        self.count = count
+        self.container_name = container_name
+        super().__init__(
+            f"Ambiguous dependency: {count} implementations of "
+            f"'{dependency_type.__name__}' registered in {container_name}. "
+            f"Use get_all() for collection injection or register with name= for disambiguation."
+        )

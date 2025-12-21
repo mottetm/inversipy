@@ -16,14 +16,24 @@ class _InjectMarker:
     pass
 
 
-# Singleton marker instance
+class _InjectAllMarker:
+    """Internal marker class for collection injection."""
+
+    pass
+
+
+# Singleton marker instances
 _inject_marker = _InjectMarker()
+_inject_all_marker = _InjectAllMarker()
 
 
 type Inject[T, *Ts] = Annotated[T, _inject_marker, *Ts]
 
+type InjectAll[T] = Annotated[list[T], _inject_all_marker]
+
 # Store reference to the Inject TypeAliasType for runtime checks
 _InjectAliasType = Inject  # type: ignore[type-arg]
+_InjectAllAliasType = InjectAll  # type: ignore[type-arg]
 """Type alias for dependency injection with optional qualifiers.
 
 Use Inject[T] to mark class attributes or function parameters for injection.
@@ -90,13 +100,16 @@ class Injectable:
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Called when a class inherits from Injectable.
 
-        Scans for Inject[Type] and Inject[Type, Named("x")] attributes and generates __init__.
+        Scans for Inject[Type], Inject[Type, Named("x")], and InjectAll[Type] attributes
+        and generates __init__.
         """
         super().__init_subclass__(**kwargs)
 
-        # Scan class annotations for Inject markers
-        # Now stores (type, name | None) tuples to support named dependencies
+        # Scan class annotations for Inject and InjectAll markers
+        # inject_fields stores (type, name | None) tuples for single dependencies
         inject_fields: dict[str, tuple[type[Any], str | None]] = {}
+        # inject_all_fields stores the item type for collection dependencies
+        inject_all_fields: dict[str, type[Any]] = {}
 
         # Get type hints from the class to resolve type aliases
         # Use include_extras=True to preserve Annotated metadata
@@ -108,6 +121,14 @@ class Injectable:
 
         for attr_name, annotation in annotations.items():
             origin = get_origin(annotation)
+
+            # Check if this uses the InjectAll TypeAliasType (Python 3.12+)
+            if origin is _InjectAllAliasType:
+                args = get_args(annotation)
+                if args:
+                    # First arg is the item type
+                    inject_all_fields[attr_name] = args[0]
+                continue
 
             # Check if this uses the Inject TypeAliasType (Python 3.12+)
             # When origin is the Inject TypeAliasType, it's implicitly an inject annotation
@@ -122,39 +143,56 @@ class Injectable:
                         if isinstance(arg, Named):
                             named_qualifier = arg.name
                     inject_fields[attr_name] = (actual_type, named_qualifier)
-            # Also support raw Annotated[Type, _InjectMarker, ...] for compatibility
-            elif origin is Annotated:
+                continue
+
+            # Also support raw Annotated[...] for compatibility
+            if origin is Annotated:
                 args = get_args(annotation)
                 if len(args) >= 2:
                     # First arg is the actual type, rest are metadata
                     actual_type = args[0]
                     metadata = args[1:]
 
-                    # Check for Inject marker and Named qualifier
-                    has_inject = False
-                    named_qualifier = None
-
+                    # Check for InjectAll marker first
                     for meta in metadata:
-                        if isinstance(meta, _InjectMarker):
-                            has_inject = True
-                        elif isinstance(meta, Named):
-                            named_qualifier = meta.name
+                        if isinstance(meta, _InjectAllMarker):
+                            # Extract T from list[T]
+                            list_origin = get_origin(actual_type)
+                            if list_origin is list:
+                                list_args = get_args(actual_type)
+                                if list_args:
+                                    inject_all_fields[attr_name] = list_args[0]
+                            break
 
-                    if has_inject:
-                        inject_fields[attr_name] = (actual_type, named_qualifier)
+                    # Check for Inject marker and Named qualifier
+                    if attr_name not in inject_all_fields:
+                        has_inject = False
+                        named_qualifier = None
+
+                        for meta in metadata:
+                            if isinstance(meta, _InjectMarker):
+                                has_inject = True
+                            elif isinstance(meta, Named):
+                                named_qualifier = meta.name
+
+                        if has_inject:
+                            inject_fields[attr_name] = (actual_type, named_qualifier)
 
         # Store inject fields metadata on the class
         setattr(cls, "_inject_fields", inject_fields)
+        setattr(cls, "_inject_all_fields", inject_all_fields)
 
         # Generate __init__ method
-        if inject_fields:
+        if inject_fields or inject_all_fields:
             # Check if class already has custom __init__
             has_custom_init = "__init__" in cls.__dict__
             original_init = cls.__init__ if has_custom_init else None
 
             # Create function that accepts dependency parameters
-            param_names = list(inject_fields.keys())
-            param_types = [t for t, _ in inject_fields.values()]
+            # Combine both inject_fields and inject_all_fields
+            param_names = list(inject_fields.keys()) + list(inject_all_fields.keys())
+            param_types: list[type[Any]] = [t for t, _ in inject_fields.values()]
+            param_types.extend([list] for _ in inject_all_fields.values())  # type: ignore
 
             # Build the function code
             def make_init(field_names: list[str]) -> Callable[..., None]:
@@ -175,8 +213,11 @@ class Injectable:
 
             # Set proper annotations on the function
             init_annotations: dict[str, Any] = {
-                name: typ for name, typ in zip(param_names, param_types)
+                name: typ for name, typ in zip(list(inject_fields.keys()), [t for t, _ in inject_fields.values()])
             }
+            # Add inject_all fields with list[T] annotation
+            for name, item_type in inject_all_fields.items():
+                init_annotations[name] = list[item_type]  # type: ignore
             init_annotations["return"] = None
             new_init.__annotations__ = init_annotations
 
@@ -248,5 +289,58 @@ def extract_inject_info(type_hint: Any) -> tuple[type[Any], str | None] | None:
 
         if has_inject:
             return (actual_type, name)
+
+    return None
+
+
+def extract_inject_all_type(type_hint: Any) -> type[Any] | None:
+    """Extract item type from InjectAll[T] -> T.
+
+    This helper function analyzes a type hint to determine if it's an InjectAll
+    annotation and extracts the collection item type.
+
+    Args:
+        type_hint: The type annotation to analyze
+
+    Returns:
+        The item type T if this is InjectAll[T], None otherwise.
+
+    Examples:
+        >>> extract_inject_all_type(InjectAll[IPlugin])
+        IPlugin
+
+        >>> extract_inject_all_type(list[IPlugin])
+        None
+
+        >>> extract_inject_all_type(Inject[IPlugin])
+        None
+    """
+    origin = get_origin(type_hint)
+
+    # Check if this uses the InjectAll TypeAliasType (Python 3.12+)
+    if origin is _InjectAllAliasType:
+        args = get_args(type_hint)
+        if args:
+            return args[0]
+        return None
+
+    # Also support raw Annotated[list[T], _InjectAllMarker] for compatibility
+    if origin is Annotated:
+        args = get_args(type_hint)
+        if len(args) < 2:
+            return None
+
+        actual_type = args[0]  # list[T]
+        metadata = args[1:]
+
+        for meta in metadata:
+            if isinstance(meta, _InjectAllMarker):
+                # Extract T from list[T]
+                list_origin = get_origin(actual_type)
+                if list_origin is list:
+                    list_args = get_args(actual_type)
+                    if list_args:
+                        return list_args[0]
+                break
 
     return None

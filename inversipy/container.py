@@ -16,6 +16,7 @@ from .binding_strategies import (
 )
 from .decorators import extract_inject_info
 from .exceptions import (
+    AmbiguousDependencyError,
     CircularDependencyError,
     DependencyNotFoundError,
     RegistrationError,
@@ -340,7 +341,8 @@ class Container:
             name: Name for this container (used in error messages)
         """
         self._name = name
-        self._bindings: dict[DependencyKey, Binding] = {}
+        # Changed to list[Binding] to support multiple implementations per interface
+        self._bindings: dict[DependencyKey, list[Binding]] = {}
         self._modules: list[ModuleProtocol] = []  # List of registered modules
         self._parent = parent
         # Resolution stack now tracks DependencyKey (type or (type, name) tuple)
@@ -402,7 +404,12 @@ class Container:
             scope=scope,
             instance=instance,
         )
-        self._bindings[key] = binding
+
+        # Accumulate bindings instead of overwriting
+        if key not in self._bindings:
+            self._bindings[key] = []
+        self._bindings[key].append(binding)
+
         return self
 
     def register_factory[T](
@@ -481,6 +488,7 @@ class Container:
 
         Raises:
             DependencyNotFoundError: If dependency is not registered
+            AmbiguousDependencyError: If multiple implementations without name
             CircularDependencyError: If circular dependency is detected
 
         Example:
@@ -500,41 +508,48 @@ class Container:
             cycle_types = [get_type_from_key(k) for k in self._resolution_stack]
             raise CircularDependencyError(cycle_types)
 
-        # Try to find binding in this container
-        binding = self._bindings.get(key)
+        # Try to find bindings in this container
+        bindings = self._bindings.get(key, [])
+
+        # Check for ambiguity
+        if len(bindings) > 1:
+            raise AmbiguousDependencyError(interface, len(bindings), self._name)
+
+        if len(bindings) == 1:
+            # Add to resolution stack
+            self._resolution_stack.append(key)
+            try:
+                return bindings[0].create_instance(self)
+            finally:
+                # Remove from resolution stack
+                self._resolution_stack.pop()
 
         # If not found, try registered modules
-        if binding is None:
-            for module in self._modules:
-                try:
-                    # Try to resolve from the module
-                    # The module will enforce its own public/private access rules
-                    instance = module.get(interface, name=name)
-                    return instance
-                except DependencyNotFoundError:
-                    # This module doesn't have it (or it's private), try next module
-                    continue
+        for module in self._modules:
+            try:
+                # Try to resolve from the module
+                # The module will enforce its own public/private access rules
+                instance = module.get(interface, name=name)
+                return instance
+            except DependencyNotFoundError:
+                # This module doesn't have it (or it's private), try next module
+                continue
+            except AmbiguousDependencyError:
+                # Propagate ambiguity errors
+                raise
 
         # If not found, try parent container
-        if binding is None and self._parent is not None:
+        if self._parent is not None:
             return self._parent.get(interface, name=name)
 
         # If still not found, raise error
-        if binding is None:
-            raise DependencyNotFoundError(interface, self._name, name=name)
-
-        # Add to resolution stack
-        self._resolution_stack.append(key)
-
-        try:
-            instance = binding.create_instance(self)
-            return instance
-        finally:
-            # Remove from resolution stack
-            self._resolution_stack.pop()
+        raise DependencyNotFoundError(interface, self._name, name=name)
 
     def try_get[T](self, interface: type[T], name: str | None = None) -> T | None:
         """Try to resolve a dependency, returning None if not found.
+
+        Note: AmbiguousDependencyError is still raised (not suppressed) since
+        it indicates a configuration issue that should be addressed.
 
         Args:
             interface: The type to resolve
@@ -542,6 +557,9 @@ class Container:
 
         Returns:
             Resolved instance or None
+
+        Raises:
+            AmbiguousDependencyError: If multiple implementations exist
         """
         try:
             return self.get(interface, name=name)
@@ -566,6 +584,7 @@ class Container:
 
         Raises:
             DependencyNotFoundError: If dependency is not registered
+            AmbiguousDependencyError: If multiple implementations without name
             CircularDependencyError: If circular dependency is detected
         """
         key = make_key(interface, name)
@@ -576,37 +595,41 @@ class Container:
             cycle_types = [get_type_from_key(k) for k in self._resolution_stack]
             raise CircularDependencyError(cycle_types)
 
-        # Try to find binding in this container
-        binding = self._bindings.get(key)
+        # Try to find bindings in this container
+        bindings = self._bindings.get(key, [])
+
+        # Check for ambiguity
+        if len(bindings) > 1:
+            raise AmbiguousDependencyError(interface, len(bindings), self._name)
+
+        if len(bindings) == 1:
+            # Add to resolution stack
+            self._resolution_stack.append(key)
+            try:
+                return await bindings[0].create_instance_async(self)
+            finally:
+                # Remove from resolution stack
+                self._resolution_stack.pop()
 
         # If not found, try registered modules
-        if binding is None:
-            for module in self._modules:
-                try:
-                    # Try to resolve from the module asynchronously
-                    instance = await module.get_async(interface, name=name)
-                    return instance
-                except DependencyNotFoundError:
-                    # This module doesn't have it (or it's private), try next module
-                    continue
+        for module in self._modules:
+            try:
+                # Try to resolve from the module asynchronously
+                instance = await module.get_async(interface, name=name)
+                return instance
+            except DependencyNotFoundError:
+                # This module doesn't have it (or it's private), try next module
+                continue
+            except AmbiguousDependencyError:
+                # Propagate ambiguity errors
+                raise
 
         # If not found, try parent container
-        if binding is None and self._parent is not None:
+        if self._parent is not None:
             return await self._parent.get_async(interface, name=name)
 
         # If still not found, raise error
-        if binding is None:
-            raise DependencyNotFoundError(interface, self._name, name=name)
-
-        # Add to resolution stack
-        self._resolution_stack.append(key)
-
-        try:
-            instance = await binding.create_instance_async(self)
-            return instance
-        finally:
-            # Remove from resolution stack
-            self._resolution_stack.pop()
+        raise DependencyNotFoundError(interface, self._name, name=name)
 
     def has(self, interface: type[Any], name: str | None = None) -> bool:
         """Check if a dependency is registered.
@@ -616,11 +639,11 @@ class Container:
             name: Optional name qualifier for named bindings
 
         Returns:
-            True if registered, False otherwise
+            True if at least one implementation registered, False otherwise
         """
         key = make_key(interface, name)
 
-        if key in self._bindings:
+        if key in self._bindings and self._bindings[key]:
             return True
 
         # Check registered modules
@@ -633,6 +656,101 @@ class Container:
             return self._parent.has(interface, name=name)
 
         return False
+
+    def count(self, interface: type[Any], name: str | None = None) -> int:
+        """Count implementations registered for an interface.
+
+        Args:
+            interface: The interface type
+            name: Optional name qualifier for named bindings
+
+        Returns:
+            Number of registered implementations
+        """
+        key = make_key(interface, name)
+        total = len(self._bindings.get(key, []))
+
+        # Count from registered modules
+        for module in self._modules:
+            if hasattr(module, "count"):
+                total += module.count(interface, name=name)
+
+        # Count from parent container
+        if self._parent is not None:
+            total += self._parent.count(interface, name=name)
+
+        return total
+
+    def get_all[T](self, interface: type[T]) -> list[T]:
+        """Resolve all implementations of an interface.
+
+        Args:
+            interface: The interface type to resolve
+
+        Returns:
+            List of all registered implementations (empty if none)
+
+        Example:
+            container.register(IPlugin, PluginA)
+            container.register(IPlugin, PluginB)
+            plugins = container.get_all(IPlugin)  # [PluginA(), PluginB()]
+        """
+        instances: list[T] = []
+
+        # Get from local bindings (unnamed only for collections)
+        bindings = self._bindings.get(interface, [])
+        for binding in bindings:
+            instance = binding.create_instance(self)
+            instances.append(instance)
+
+        # Get from registered modules
+        for module in self._modules:
+            if hasattr(module, "get_all"):
+                try:
+                    module_instances = module.get_all(interface)
+                    instances.extend(module_instances)
+                except Exception:
+                    pass
+
+        # Get from parent container
+        if self._parent is not None:
+            parent_instances = self._parent.get_all(interface)
+            instances.extend(parent_instances)
+
+        return instances
+
+    async def get_all_async[T](self, interface: type[T]) -> list[T]:
+        """Resolve all implementations asynchronously.
+
+        Args:
+            interface: The interface type to resolve
+
+        Returns:
+            List of all registered implementations (empty if none)
+        """
+        instances: list[T] = []
+
+        # Get from local bindings (unnamed only for collections)
+        bindings = self._bindings.get(interface, [])
+        for binding in bindings:
+            instance = await binding.create_instance_async(self)
+            instances.append(instance)
+
+        # Get from registered modules
+        for module in self._modules:
+            if hasattr(module, "get_all_async"):
+                try:
+                    module_instances = await module.get_all_async(interface)
+                    instances.extend(module_instances)
+                except Exception:
+                    pass
+
+        # Get from parent container
+        if self._parent is not None:
+            parent_instances = await self._parent.get_all_async(interface)
+            instances.extend(parent_instances)
+
+        return instances
 
     def run[T](self, func: Callable[..., T], **provided_kwargs: Any) -> T:
         """Run a function with dependency injection using synchronous resolution.
@@ -697,6 +815,12 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
+                    # Check for InjectAll annotation first
+                    inject_all_type = self._extract_inject_all_type(param_type)
+                    if inject_all_type is not None:
+                        resolved_kwargs[param_name] = self.get_all(inject_all_type)
+                        continue
+
                     # Check for Inject[T, Named(...)] annotations
                     inject_info = extract_inject_info(param_type)
                     if inject_info:
@@ -729,7 +853,7 @@ class Container:
             return func(**resolved_kwargs)
 
         except Exception as e:
-            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
+            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError, AmbiguousDependencyError)):
                 raise
             raise ResolutionError(f"Failed to run function '{func.__name__}': {e}")
 
@@ -797,6 +921,12 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
+                    # Check for InjectAll annotation first
+                    inject_all_type = self._extract_inject_all_type(param_type)
+                    if inject_all_type is not None:
+                        resolved_kwargs[param_name] = await self.get_all_async(inject_all_type)
+                        continue
+
                     # Check for Inject[T, Named(...)] annotations
                     inject_info = extract_inject_info(param_type)
                     if inject_info:
@@ -831,7 +961,7 @@ class Container:
             return func(**resolved_kwargs)
 
         except Exception as e:
-            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
+            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError, AmbiguousDependencyError)):
                 raise
             raise ResolutionError(f"Failed to run function '{func.__name__}': {e}")
 
@@ -839,7 +969,8 @@ class Container:
         """Create an instance of a class, resolving its dependencies.
 
         Supports both regular constructor injection and Injectable classes with
-        named dependencies via Inject[Type, Named("qualifier")].
+        named dependencies via Inject[Type, Named("qualifier")] and collection
+        injection via InjectAll[Type].
 
         Args:
             cls: The class to instantiate
@@ -851,23 +982,35 @@ class Container:
             ResolutionError: If instance creation fails
         """
         try:
-            # Check if this is an Injectable class with named dependency metadata
+            # Check if this is an Injectable class with dependency metadata
             inject_fields: dict[str, tuple[type, str | None]] | None = getattr(
                 cls, "_inject_fields", None
             )
+            inject_all_fields: dict[str, type] | None = getattr(
+                cls, "_inject_all_fields", None
+            )
 
-            if inject_fields:
+            if inject_fields or inject_all_fields:
                 # Injectable class - use the stored field metadata
                 kwargs: dict[str, Any] = {}
-                for field_name, (field_type, dep_name) in inject_fields.items():
-                    try:
-                        kwargs[field_name] = self.get(field_type, name=dep_name)
-                    except DependencyNotFoundError:
-                        raise ResolutionError(
-                            f"Cannot resolve dependency '{field_name}' of type "
-                            f"{_format_dependency(field_type, dep_name)} "
-                            f"for class '{cls.__name__}'"
-                        )
+
+                # Handle single dependencies
+                if inject_fields:
+                    for field_name, (field_type, dep_name) in inject_fields.items():
+                        try:
+                            kwargs[field_name] = self.get(field_type, name=dep_name)
+                        except DependencyNotFoundError:
+                            raise ResolutionError(
+                                f"Cannot resolve dependency '{field_name}' of type "
+                                f"{_format_dependency(field_type, dep_name)} "
+                                f"for class '{cls.__name__}'"
+                            )
+
+                # Handle collection dependencies
+                if inject_all_fields:
+                    for field_name, item_type in inject_all_fields.items():
+                        kwargs[field_name] = self.get_all(item_type)
+
                 return cls(**kwargs)
 
             # Regular class - use constructor inspection
@@ -900,6 +1043,12 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
+                    # Check for InjectAll annotation first
+                    inject_all_type = self._extract_inject_all_type(param_type)
+                    if inject_all_type is not None:
+                        kwargs[param_name] = self.get_all(inject_all_type)
+                        continue
+
                     # Check for Inject annotation with optional Named qualifier
                     inject_info = extract_inject_info(param_type)
                     if inject_info:
@@ -942,7 +1091,8 @@ class Container:
         """Create an instance of a class asynchronously, resolving its dependencies.
 
         Supports both regular constructor injection and Injectable classes with
-        named dependencies via Inject[Type, Named("qualifier")].
+        named dependencies via Inject[Type, Named("qualifier")] and collection
+        injection via InjectAll[Type].
 
         Args:
             cls: The class to instantiate
@@ -954,23 +1104,35 @@ class Container:
             ResolutionError: If instance creation fails
         """
         try:
-            # Check if this is an Injectable class with named dependency metadata
+            # Check if this is an Injectable class with dependency metadata
             inject_fields: dict[str, tuple[type, str | None]] | None = getattr(
                 cls, "_inject_fields", None
             )
+            inject_all_fields: dict[str, type] | None = getattr(
+                cls, "_inject_all_fields", None
+            )
 
-            if inject_fields:
+            if inject_fields or inject_all_fields:
                 # Injectable class - use the stored field metadata
                 kwargs: dict[str, Any] = {}
-                for field_name, (field_type, dep_name) in inject_fields.items():
-                    try:
-                        kwargs[field_name] = await self.get_async(field_type, name=dep_name)
-                    except DependencyNotFoundError:
-                        raise ResolutionError(
-                            f"Cannot resolve dependency '{field_name}' of type "
-                            f"{_format_dependency(field_type, dep_name)} "
-                            f"for class '{cls.__name__}'"
-                        )
+
+                # Handle single dependencies
+                if inject_fields:
+                    for field_name, (field_type, dep_name) in inject_fields.items():
+                        try:
+                            kwargs[field_name] = await self.get_async(field_type, name=dep_name)
+                        except DependencyNotFoundError:
+                            raise ResolutionError(
+                                f"Cannot resolve dependency '{field_name}' of type "
+                                f"{_format_dependency(field_type, dep_name)} "
+                                f"for class '{cls.__name__}'"
+                            )
+
+                # Handle collection dependencies
+                if inject_all_fields:
+                    for field_name, item_type in inject_all_fields.items():
+                        kwargs[field_name] = await self.get_all_async(item_type)
+
                 return cls(**kwargs)
 
             # Regular class - use constructor inspection
@@ -1003,6 +1165,12 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
+                    # Check for InjectAll annotation first
+                    inject_all_type = self._extract_inject_all_type(param_type)
+                    if inject_all_type is not None:
+                        kwargs[param_name] = await self.get_all_async(inject_all_type)
+                        continue
+
                     # Check for Inject annotation with optional Named qualifier
                     inject_info = extract_inject_info(param_type)
                     if inject_info:
@@ -1104,41 +1272,43 @@ class Container:
         # Build dependency graph for implementations only
         graph: dict[type[Any], list[type[Any]]] = {}
 
-        for key, binding in self._bindings.items():
-            if binding.instance is not None or binding.factory is not None:
-                continue
-            if binding.implementation is not None:
-                # Extract the type from the key (handles both type and (type, name) tuples)
-                node_type = get_type_from_key(key)
-                deps = self._get_implementation_dependencies(binding.implementation)
-                # Only include dependencies that are registered in this container
-                registered_deps = [
-                    d
-                    for d in deps
-                    if d in self._bindings
-                    or any(d in m._bindings for m in self._modules if hasattr(m, "_bindings"))
-                ]
-                graph[node_type] = registered_deps
+        for key, bindings in self._bindings.items():
+            for binding in bindings:
+                if binding.instance is not None or binding.factory is not None:
+                    continue
+                if binding.implementation is not None:
+                    # Extract the type from the key (handles both type and (type, name) tuples)
+                    node_type = get_type_from_key(key)
+                    deps = self._get_implementation_dependencies(binding.implementation)
+                    # Only include dependencies that are registered in this container
+                    registered_deps = [
+                        d
+                        for d in deps
+                        if d in self._bindings
+                        or any(d in m._bindings for m in self._modules if hasattr(m, "_bindings"))
+                    ]
+                    graph[node_type] = registered_deps
 
         # Also check modules
         for module in self._modules:
             if hasattr(module, "_bindings"):
-                for key, binding in module._bindings.items():
-                    if binding.instance is not None or binding.factory is not None:
-                        continue
-                    if binding.implementation is not None:
-                        node_type = get_type_from_key(key)
-                        deps = self._get_implementation_dependencies(binding.implementation)
-                        registered_deps = [
-                            d
-                            for d in deps
-                            if d in self._bindings
-                            or d in module._bindings
-                            or any(
-                                d in m._bindings for m in self._modules if hasattr(m, "_bindings")
-                            )
-                        ]
-                        graph[node_type] = registered_deps
+                for key, bindings in module._bindings.items():
+                    for binding in bindings:
+                        if binding.instance is not None or binding.factory is not None:
+                            continue
+                        if binding.implementation is not None:
+                            node_type = get_type_from_key(key)
+                            deps = self._get_implementation_dependencies(binding.implementation)
+                            registered_deps = [
+                                d
+                                for d in deps
+                                if d in self._bindings
+                                or d in module._bindings
+                                or any(
+                                    d in m._bindings for m in self._modules if hasattr(m, "_bindings")
+                                )
+                            ]
+                            graph[node_type] = registered_deps
 
         # DFS to detect cycles
         cycles: list[list[type[Any]]] = []
@@ -1175,6 +1345,7 @@ class Container:
         This checks:
         - All required dependencies are registered
         - No circular dependencies exist
+        - No ambiguous dependencies (multiple implementations without name qualifier)
 
         Raises:
             ValidationError: If validation fails
@@ -1187,92 +1358,123 @@ class Container:
             chain_str = " -> ".join(t.__name__ for t in cycle)
             errors.append(f"Circular dependency detected: {chain_str}")
 
-        for key, binding in self._bindings.items():
-            # Skip validation for instances and factories
-            if binding.instance is not None or binding.factory is not None:
-                continue
+        for key, bindings in self._bindings.items():
+            for binding in bindings:
+                # Skip validation for instances and factories
+                if binding.instance is not None or binding.factory is not None:
+                    continue
 
-            # Validate implementation can be instantiated
-            if binding.implementation is not None:
-                cls = binding.implementation
-                try:
-                    # Get type hints for the constructor (with extras for Annotated)
-                    init_method = cls.__init__
+                # Validate implementation can be instantiated
+                if binding.implementation is not None:
+                    cls = binding.implementation
                     try:
-                        type_hints = get_type_hints(init_method, include_extras=True)
-                    except Exception:
-                        continue  # Skip if we can't get type hints
+                        # Get type hints for the constructor (with extras for Annotated)
+                        init_method = cls.__init__
+                        try:
+                            type_hints = get_type_hints(init_method, include_extras=True)
+                        except Exception:
+                            continue  # Skip if we can't get type hints
 
-                    type_hints.pop("return", None)
+                        type_hints.pop("return", None)
 
-                    # Get constructor signature
-                    sig = inspect.signature(init_method)
+                        # Get constructor signature
+                        sig = inspect.signature(init_method)
 
-                    # Check each parameter
-                    for param_name, param in sig.parameters.items():
-                        if param_name == "self":
-                            continue
+                        # Check each parameter
+                        for param_name, param in sig.parameters.items():
+                            if param_name == "self":
+                                continue
 
-                        # Skip *args and **kwargs
-                        if param.kind in (
-                            inspect.Parameter.VAR_POSITIONAL,
-                            inspect.Parameter.VAR_KEYWORD,
-                        ):
-                            continue
+                            # Skip *args and **kwargs
+                            if param.kind in (
+                                inspect.Parameter.VAR_POSITIONAL,
+                                inspect.Parameter.VAR_KEYWORD,
+                            ):
+                                continue
 
-                        param_type = type_hints.get(param_name)
+                            param_type = type_hints.get(param_name)
 
-                        if param_type is not None:
-                            # Check for Inject[T, Named(...)] annotations
-                            inject_info = extract_inject_info(param_type)
-                            if inject_info:
-                                actual_type, dep_name = inject_info
-                                dep_key = make_key(actual_type, dep_name)
-                                # Check bindings directly (not has()) to include private deps
-                                has_dependency = (
-                                    dep_key in self._bindings
-                                    or any(
-                                        dep_key in m._bindings
-                                        for m in self._modules
-                                        if hasattr(m, "_bindings")
-                                    )
-                                    or (
-                                        self._parent is not None
-                                        and self._parent.has(actual_type, name=dep_name)
-                                    )
-                                )
-                                if not has_dependency:
-                                    if param.default is inspect.Parameter.empty:
-                                        errors.append(
-                                            f"Dependency '{cls.__name__}' requires "
-                                            f"'{_format_dependency(actual_type, dep_name)}' "
-                                            f"(parameter '{param_name}') which is not registered"
+                            if param_type is not None:
+                                # Check for InjectAll - always valid (even if empty)
+                                inject_all_type = self._extract_inject_all_type(param_type)
+                                if inject_all_type is not None:
+                                    continue
+
+                                # Check for Inject[T, Named(...)] annotations
+                                inject_info = extract_inject_info(param_type)
+                                if inject_info:
+                                    actual_type, dep_name = inject_info
+                                    dep_key = make_key(actual_type, dep_name)
+                                    # Check bindings directly (not has()) to include private deps
+                                    has_dependency = (
+                                        dep_key in self._bindings and self._bindings[dep_key]
+                                        or any(
+                                            dep_key in m._bindings and m._bindings[dep_key]
+                                            for m in self._modules
+                                            if hasattr(m, "_bindings")
                                         )
-                            else:
-                                # Regular type hint - check if registered
-                                has_dependency = (
-                                    param_type in self._bindings
-                                    or any(
-                                        param_type in m._bindings
-                                        for m in self._modules
-                                        if hasattr(m, "_bindings")
-                                    )
-                                    or (self._parent is not None and self._parent.has(param_type))
-                                )
-                                if not has_dependency:
-                                    if param.default is inspect.Parameter.empty:
-                                        type_name = getattr(param_type, "__name__", str(param_type))
-                                        errors.append(
-                                            f"Dependency '{cls.__name__}' requires "
-                                            f"'{type_name}' (parameter '{param_name}') "
-                                            f"which is not registered"
+                                        or (
+                                            self._parent is not None
+                                            and self._parent.has(actual_type, name=dep_name)
                                         )
+                                    )
+                                    if not has_dependency:
+                                        if param.default is inspect.Parameter.empty:
+                                            errors.append(
+                                                f"Dependency '{cls.__name__}' requires "
+                                                f"'{_format_dependency(actual_type, dep_name)}' "
+                                                f"(parameter '{param_name}') which is not registered"
+                                            )
+                                else:
+                                    # Regular type hint - check if registered
+                                    has_dependency = (
+                                        param_type in self._bindings and self._bindings[param_type]
+                                        or any(
+                                            param_type in m._bindings and m._bindings[param_type]
+                                            for m in self._modules
+                                            if hasattr(m, "_bindings")
+                                        )
+                                        or (self._parent is not None and self._parent.has(param_type))
+                                    )
+                                    if not has_dependency:
+                                        if param.default is inspect.Parameter.empty:
+                                            type_name = getattr(param_type, "__name__", str(param_type))
+                                            errors.append(
+                                                f"Dependency '{cls.__name__}' requires "
+                                                f"'{type_name}' (parameter '{param_name}') "
+                                                f"which is not registered"
+                                            )
+                                    elif param.default is inspect.Parameter.empty:
+                                        # Check for ambiguous dependency
+                                        dep_count = self.count(param_type)
+                                        if dep_count > 1:
+                                            type_name = getattr(param_type, "__name__", str(param_type))
+                                            errors.append(
+                                                f"Dependency '{cls.__name__}' requires "
+                                                f"'{type_name}' (parameter '{param_name}') "
+                                                f"but {dep_count} implementations are registered. "
+                                                f"Use Inject[{type_name}, Named('...')] to disambiguate "
+                                                f"or InjectAll[{type_name}] for collection injection."
+                                            )
 
-                except Exception as e:
-                    errors.append(f"Failed to validate dependency '{cls.__name__}': {e}")
+                    except Exception as e:
+                        errors.append(f"Failed to validate dependency '{cls.__name__}': {e}")
 
         if errors:
             raise ValidationError(errors)
+
+    def _extract_inject_all_type(self, type_hint: Any) -> type | None:
+        """Extract item type from InjectAll[T] -> T.
+
+        Args:
+            type_hint: The type annotation to check
+
+        Returns:
+            The item type T if this is InjectAll[T], None otherwise
+        """
+        # Import here to avoid circular imports
+        from .decorators import extract_inject_all_type
+        return extract_inject_all_type(type_hint)
 
     def __repr__(self) -> str:
         """Get string representation of the container."""
