@@ -1,0 +1,871 @@
+"""Tests for collection injection feature.
+
+This module tests the ability to register multiple implementations of the same
+interface and inject them as a collection.
+"""
+
+import pytest
+
+from inversipy import (
+    Container,
+    DependencyNotFoundError,
+    Inject,
+    Injectable,
+    Module,
+    Named,
+    Scopes,
+    ValidationError,
+)
+
+# These imports will fail until the feature is implemented
+try:
+    from inversipy import AmbiguousDependencyError, InjectAll
+except ImportError:
+    # Placeholder for tests to run (they will fail with appropriate errors)
+    AmbiguousDependencyError = None  # type: ignore
+    InjectAll = None  # type: ignore
+
+
+# =============================================================================
+# Test Fixtures - Interfaces and Implementations
+# =============================================================================
+
+
+class IPlugin:
+    """Interface for plugins."""
+
+    def execute(self) -> str:
+        raise NotImplementedError
+
+
+class PluginA(IPlugin):
+    """Plugin A implementation."""
+
+    def execute(self) -> str:
+        return "PluginA"
+
+
+class PluginB(IPlugin):
+    """Plugin B implementation."""
+
+    def execute(self) -> str:
+        return "PluginB"
+
+
+class PluginC(IPlugin):
+    """Plugin C implementation."""
+
+    def execute(self) -> str:
+        return "PluginC"
+
+
+class IValidator:
+    """Interface for validators."""
+
+    def validate(self, value: str) -> bool:
+        raise NotImplementedError
+
+
+class LengthValidator(IValidator):
+    """Validates string length."""
+
+    def validate(self, value: str) -> bool:
+        return len(value) > 0
+
+
+class AlphaValidator(IValidator):
+    """Validates string contains only alpha characters."""
+
+    def validate(self, value: str) -> bool:
+        return value.isalpha()
+
+
+class IService:
+    """Generic service interface."""
+
+    pass
+
+
+class ServiceImpl(IService):
+    """Service implementation."""
+
+    pass
+
+
+# =============================================================================
+# Test Classes: Accumulation Behavior
+# =============================================================================
+
+
+class TestAccumulationBehavior:
+    """Test that multiple register() calls accumulate bindings."""
+
+    def test_multiple_register_calls_accumulate(self) -> None:
+        """Multiple register() calls for same interface should accumulate."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(IPlugin, PluginC)
+
+        # Should have 3 implementations
+        assert container.count(IPlugin) == 3
+
+    def test_same_implementation_can_be_registered_twice(self) -> None:
+        """Same implementation can be registered multiple times."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginA)
+
+        assert container.count(IPlugin) == 2
+
+    def test_register_returns_self_for_chaining(self) -> None:
+        """register() should return self for method chaining."""
+        container = Container()
+        result = (
+            container.register(IPlugin, PluginA)
+            .register(IPlugin, PluginB)
+            .register(IPlugin, PluginC)
+        )
+
+        assert result is container
+        assert container.count(IPlugin) == 3
+
+    def test_named_and_unnamed_registrations_are_separate(self) -> None:
+        """Named and unnamed registrations should be tracked separately."""
+        container = Container()
+        container.register(IPlugin, PluginA)  # Unnamed
+        container.register(IPlugin, PluginB, name="special")  # Named
+
+        # Unnamed count should be 1
+        assert container.count(IPlugin) == 1
+        # Named should exist separately
+        assert container.has(IPlugin, name="special")
+
+
+# =============================================================================
+# Test Classes: Single Resolution Ambiguity
+# =============================================================================
+
+
+class TestSingleResolutionAmbiguity:
+    """Test that get() raises AmbiguousDependencyError when multiple exist."""
+
+    def test_get_with_single_binding_works(self) -> None:
+        """get() with single binding should work as before."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+
+        plugin = container.get(IPlugin)
+        assert isinstance(plugin, PluginA)
+        assert plugin.execute() == "PluginA"
+
+    def test_get_with_multiple_bindings_raises_ambiguous_error(self) -> None:
+        """get() with multiple bindings should raise AmbiguousDependencyError."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+
+        with pytest.raises(AmbiguousDependencyError) as exc_info:
+            container.get(IPlugin)
+
+        assert exc_info.value.dependency_type is IPlugin
+        assert exc_info.value.count == 2
+        assert "IPlugin" in str(exc_info.value)
+        assert "2" in str(exc_info.value)
+
+    def test_get_with_name_works_when_multiple_exist(self) -> None:
+        """get() with name should work even when multiple unnamed exist."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(IPlugin, PluginC, name="primary")
+
+        # Named resolution should work
+        plugin = container.get(IPlugin, name="primary")
+        assert isinstance(plugin, PluginC)
+
+    def test_get_with_name_not_affected_by_unnamed_bindings(self) -> None:
+        """Named get() should not be affected by unnamed bindings count."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(IPlugin, PluginC, name="main")
+
+        # Should resolve the named one without ambiguity
+        plugin = container.get(IPlugin, name="main")
+        assert isinstance(plugin, PluginC)
+
+    def test_ambiguous_error_message_is_helpful(self) -> None:
+        """AmbiguousDependencyError message should suggest fixes."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(IPlugin, PluginC)
+
+        with pytest.raises(AmbiguousDependencyError) as exc_info:
+            container.get(IPlugin)
+
+        error_msg = str(exc_info.value)
+        # Should mention get_all()
+        assert "get_all" in error_msg.lower()
+        # Should mention using names
+        assert "name" in error_msg.lower()
+
+    def test_try_get_with_multiple_bindings_raises(self) -> None:
+        """try_get() should also raise AmbiguousDependencyError."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+
+        # try_get should raise on ambiguity, not return None
+        with pytest.raises(AmbiguousDependencyError):
+            container.try_get(IPlugin)
+
+
+# =============================================================================
+# Test Classes: Collection Resolution
+# =============================================================================
+
+
+class TestCollectionResolution:
+    """Test get_all() method for resolving all implementations."""
+
+    def test_get_all_returns_all_implementations(self) -> None:
+        """get_all() should return all registered implementations."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(IPlugin, PluginC)
+
+        plugins = container.get_all(IPlugin)
+
+        assert len(plugins) == 3
+        assert any(isinstance(p, PluginA) for p in plugins)
+        assert any(isinstance(p, PluginB) for p in plugins)
+        assert any(isinstance(p, PluginC) for p in plugins)
+
+    def test_get_all_returns_empty_list_when_none_registered(self) -> None:
+        """get_all() should return empty list when no implementations."""
+        container = Container()
+
+        plugins = container.get_all(IPlugin)
+
+        assert plugins == []
+        assert isinstance(plugins, list)
+
+    def test_get_all_preserves_registration_order(self) -> None:
+        """get_all() should return implementations in registration order."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(IPlugin, PluginC)
+
+        plugins = container.get_all(IPlugin)
+
+        assert isinstance(plugins[0], PluginA)
+        assert isinstance(plugins[1], PluginB)
+        assert isinstance(plugins[2], PluginC)
+
+    def test_get_all_with_single_implementation(self) -> None:
+        """get_all() with single implementation should return list with one item."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+
+        plugins = container.get_all(IPlugin)
+
+        assert len(plugins) == 1
+        assert isinstance(plugins[0], PluginA)
+
+    def test_get_all_does_not_include_named_bindings(self) -> None:
+        """get_all() should only return unnamed bindings."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(IPlugin, PluginC, name="special")
+
+        plugins = container.get_all(IPlugin)
+
+        assert len(plugins) == 2
+        assert not any(isinstance(p, PluginC) for p in plugins)
+
+    def test_get_all_creates_new_instances_for_transient(self) -> None:
+        """get_all() should create new instances for transient scope."""
+        container = Container()
+        container.register(IPlugin, PluginA, scope=Scopes.TRANSIENT)
+
+        plugins1 = container.get_all(IPlugin)
+        plugins2 = container.get_all(IPlugin)
+
+        assert plugins1[0] is not plugins2[0]
+
+
+# =============================================================================
+# Test Classes: Async Collection Resolution
+# =============================================================================
+
+
+class TestAsyncCollectionResolution:
+    """Test get_all_async() method."""
+
+    @pytest.mark.asyncio
+    async def test_get_all_async_returns_all_implementations(self) -> None:
+        """get_all_async() should return all registered implementations."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+
+        plugins = await container.get_all_async(IPlugin)
+
+        assert len(plugins) == 2
+        assert any(isinstance(p, PluginA) for p in plugins)
+        assert any(isinstance(p, PluginB) for p in plugins)
+
+    @pytest.mark.asyncio
+    async def test_get_all_async_returns_empty_list_when_none(self) -> None:
+        """get_all_async() should return empty list when none registered."""
+        container = Container()
+
+        plugins = await container.get_all_async(IPlugin)
+
+        assert plugins == []
+
+    @pytest.mark.asyncio
+    async def test_get_all_async_with_async_factory(self) -> None:
+        """get_all_async() should work with async factories."""
+        container = Container()
+
+        async def create_plugin_a() -> PluginA:
+            return PluginA()
+
+        async def create_plugin_b() -> PluginB:
+            return PluginB()
+
+        container.register_factory(IPlugin, create_plugin_a)
+        container.register_factory(IPlugin, create_plugin_b)
+
+        plugins = await container.get_all_async(IPlugin)
+
+        assert len(plugins) == 2
+
+
+# =============================================================================
+# Test Classes: Scopes in Collections
+# =============================================================================
+
+
+class TestScopesInCollections:
+    """Test that scopes work correctly with collection injection."""
+
+    def test_singleton_scope_returns_same_instances(self) -> None:
+        """Singleton scoped items should return same instances across calls."""
+        container = Container()
+        container.register(IPlugin, PluginA, scope=Scopes.SINGLETON)
+        container.register(IPlugin, PluginB, scope=Scopes.SINGLETON)
+
+        plugins1 = container.get_all(IPlugin)
+        plugins2 = container.get_all(IPlugin)
+
+        assert plugins1[0] is plugins2[0]
+        assert plugins1[1] is plugins2[1]
+
+    def test_transient_scope_returns_new_instances(self) -> None:
+        """Transient scoped items should return new instances each call."""
+        container = Container()
+        container.register(IPlugin, PluginA, scope=Scopes.TRANSIENT)
+        container.register(IPlugin, PluginB, scope=Scopes.TRANSIENT)
+
+        plugins1 = container.get_all(IPlugin)
+        plugins2 = container.get_all(IPlugin)
+
+        assert plugins1[0] is not plugins2[0]
+        assert plugins1[1] is not plugins2[1]
+
+    def test_mixed_scopes_in_collection(self) -> None:
+        """Collection can have items with different scopes."""
+        container = Container()
+        container.register(IPlugin, PluginA, scope=Scopes.SINGLETON)
+        container.register(IPlugin, PluginB, scope=Scopes.TRANSIENT)
+
+        plugins1 = container.get_all(IPlugin)
+        plugins2 = container.get_all(IPlugin)
+
+        # PluginA is singleton - same instance
+        assert plugins1[0] is plugins2[0]
+        # PluginB is transient - different instances
+        assert plugins1[1] is not plugins2[1]
+
+
+# =============================================================================
+# Test Classes: InjectAll Type Alias
+# =============================================================================
+
+
+class TestInjectAllTypeAlias:
+    """Test InjectAll[T] type alias for property/constructor injection."""
+
+    def test_inject_all_property_injection(self) -> None:
+        """InjectAll should work with Injectable property injection."""
+
+        class PluginManager(Injectable):
+            plugins: InjectAll[IPlugin]
+
+            def run_all(self) -> list[str]:
+                return [p.execute() for p in self.plugins]
+
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(PluginManager)
+
+        manager = container.get(PluginManager)
+
+        assert len(manager.plugins) == 2
+        results = manager.run_all()
+        assert "PluginA" in results
+        assert "PluginB" in results
+
+    def test_inject_all_constructor_injection(self) -> None:
+        """InjectAll should work with constructor injection."""
+
+        class PluginRunner:
+            def __init__(self, plugins: InjectAll[IPlugin]) -> None:
+                self.plugins = plugins
+
+            def run_all(self) -> list[str]:
+                return [p.execute() for p in self.plugins]
+
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(PluginRunner)
+
+        runner = container.get(PluginRunner)
+
+        assert len(runner.plugins) == 2
+
+    def test_inject_all_with_empty_collection(self) -> None:
+        """InjectAll should inject empty list when no implementations."""
+
+        class OptionalPluginManager(Injectable):
+            plugins: InjectAll[IPlugin]
+
+        container = Container()
+        container.register(OptionalPluginManager)
+
+        manager = container.get(OptionalPluginManager)
+
+        assert manager.plugins == []
+        assert isinstance(manager.plugins, list)
+
+    def test_inject_all_combined_with_inject(self) -> None:
+        """InjectAll can be used alongside Inject."""
+
+        class ComplexService(Injectable):
+            plugins: InjectAll[IPlugin]
+            primary: Inject[IService]
+
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(IService, ServiceImpl)
+        container.register(ComplexService)
+
+        service = container.get(ComplexService)
+
+        assert len(service.plugins) == 2
+        assert isinstance(service.primary, ServiceImpl)
+
+    def test_inject_all_with_named_inject(self) -> None:
+        """InjectAll can be used alongside named Inject."""
+
+        class MixedService(Injectable):
+            all_plugins: InjectAll[IPlugin]
+            main_plugin: Inject[IPlugin, Named("main")]
+
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(IPlugin, PluginC, name="main")
+        container.register(MixedService)
+
+        service = container.get(MixedService)
+
+        assert len(service.all_plugins) == 2
+        assert isinstance(service.main_plugin, PluginC)
+
+
+# =============================================================================
+# Test Classes: Module Collections
+# =============================================================================
+
+
+class TestModuleCollections:
+    """Test collection injection with modules."""
+
+    def test_module_get_all_respects_public_visibility(self) -> None:
+        """Module get_all() should only return public implementations."""
+        module = Module("plugins")
+        module.register(IPlugin, PluginA, public=True)
+        module.register(IPlugin, PluginB, public=False)  # Private
+
+        plugins = module.get_all(IPlugin)
+
+        # Only public one should be returned
+        assert len(plugins) == 1
+        assert isinstance(plugins[0], PluginA)
+
+    def test_container_aggregates_from_modules(self) -> None:
+        """Container should aggregate implementations from registered modules."""
+        module = Module("plugins")
+        module.register(IPlugin, PluginA, public=True)
+        module.register(IPlugin, PluginB, public=True)
+
+        container = Container()
+        container.register(IPlugin, PluginC)
+        container.register_module(module)
+
+        plugins = container.get_all(IPlugin)
+
+        assert len(plugins) == 3
+
+    def test_container_aggregates_from_multiple_modules(self) -> None:
+        """Container should aggregate from multiple modules."""
+        module1 = Module("module1")
+        module1.register(IPlugin, PluginA, public=True)
+
+        module2 = Module("module2")
+        module2.register(IPlugin, PluginB, public=True)
+
+        container = Container()
+        container.register_module(module1)
+        container.register_module(module2)
+
+        plugins = container.get_all(IPlugin)
+
+        assert len(plugins) == 2
+
+    def test_parent_container_aggregation(self) -> None:
+        """Child container should aggregate from parent."""
+        parent = Container()
+        parent.register(IPlugin, PluginA)
+
+        child = parent.create_child()
+        child.register(IPlugin, PluginB)
+
+        plugins = child.get_all(IPlugin)
+
+        assert len(plugins) == 2
+
+    def test_module_count_only_counts_public(self) -> None:
+        """Module count() should only count public implementations."""
+        module = Module("plugins")
+        module.register(IPlugin, PluginA, public=True)
+        module.register(IPlugin, PluginB, public=True)
+        module.register(IPlugin, PluginC, public=False)  # Private
+
+        # Direct module count (for public only through container interface)
+        container = Container()
+        container.register_module(module)
+
+        # Module should report public count
+        assert module.count(IPlugin) == 2
+
+
+# =============================================================================
+# Test Classes: Validation
+# =============================================================================
+
+
+class TestValidation:
+    """Test validation with collection injection."""
+
+    def test_validation_passes_with_inject_all_empty(self) -> None:
+        """Validation should pass when InjectAll dependency has no implementations."""
+
+        class OptionalPlugins(Injectable):
+            plugins: InjectAll[IPlugin]
+
+        container = Container()
+        container.register(OptionalPlugins)
+
+        # Should not raise
+        container.validate()
+
+    def test_validation_detects_ambiguous_dependency(self) -> None:
+        """Validation should detect ambiguous dependencies."""
+
+        class NeedsPlugin:
+            def __init__(self, plugin: IPlugin) -> None:
+                self.plugin = plugin
+
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(NeedsPlugin)
+
+        with pytest.raises(ValidationError) as exc_info:
+            container.validate()
+
+        error_msg = str(exc_info.value)
+        assert "IPlugin" in error_msg
+        assert "2" in error_msg or "multiple" in error_msg.lower()
+
+    def test_validation_error_suggests_named_or_inject_all(self) -> None:
+        """Validation error for ambiguity should suggest fixes."""
+
+        class NeedsPlugin:
+            def __init__(self, plugin: IPlugin) -> None:
+                self.plugin = plugin
+
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(NeedsPlugin)
+
+        with pytest.raises(ValidationError) as exc_info:
+            container.validate()
+
+        error_msg = str(exc_info.value)
+        # Should suggest Named() or InjectAll
+        assert "Named" in error_msg or "InjectAll" in error_msg
+
+    def test_validation_passes_with_named_dependency(self) -> None:
+        """Validation should pass when ambiguity is resolved with Named."""
+
+        class NeedsPlugin:
+            def __init__(self, plugin: Inject[IPlugin, Named("main")]) -> None:
+                self.plugin = plugin
+
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(IPlugin, PluginC, name="main")
+        container.register(NeedsPlugin)
+
+        # Should not raise - named dependency resolves ambiguity
+        container.validate()
+
+    def test_validation_passes_with_single_implementation(self) -> None:
+        """Validation should pass with single implementation (no ambiguity)."""
+
+        class NeedsPlugin:
+            def __init__(self, plugin: IPlugin) -> None:
+                self.plugin = plugin
+
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(NeedsPlugin)
+
+        # Should not raise - only one implementation
+        container.validate()
+
+
+# =============================================================================
+# Test Classes: Container.run() Integration
+# =============================================================================
+
+
+class TestContainerRunIntegration:
+    """Test that container.run() works with collection injection."""
+
+    def test_run_with_inject_all_parameter(self) -> None:
+        """container.run() should resolve InjectAll parameters."""
+
+        def process_plugins(plugins: InjectAll[IPlugin]) -> list[str]:
+            return [p.execute() for p in plugins]
+
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+
+        results = container.run(process_plugins)
+
+        assert len(results) == 2
+        assert "PluginA" in results
+        assert "PluginB" in results
+
+    def test_run_with_ambiguous_dependency_raises(self) -> None:
+        """container.run() should raise on ambiguous dependencies."""
+
+        def process_plugin(plugin: IPlugin) -> str:
+            return plugin.execute()
+
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+
+        with pytest.raises(AmbiguousDependencyError):
+            container.run(process_plugin)
+
+    @pytest.mark.asyncio
+    async def test_run_async_with_inject_all(self) -> None:
+        """container.run_async() should resolve InjectAll parameters."""
+
+        async def process_plugins(plugins: InjectAll[IPlugin]) -> list[str]:
+            return [p.execute() for p in plugins]
+
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+
+        results = await container.run_async(process_plugins)
+
+        assert len(results) == 2
+
+
+# =============================================================================
+# Test Classes: has() and count() Methods
+# =============================================================================
+
+
+class TestHasAndCount:
+    """Test has() and count() methods with collections."""
+
+    def test_has_returns_true_with_multiple_implementations(self) -> None:
+        """has() should return True when any implementations exist."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+
+        assert container.has(IPlugin) is True
+
+    def test_has_returns_false_when_none_registered(self) -> None:
+        """has() should return False when no implementations."""
+        container = Container()
+
+        assert container.has(IPlugin) is False
+
+    def test_count_returns_number_of_implementations(self) -> None:
+        """count() should return the number of registered implementations."""
+        container = Container()
+
+        assert container.count(IPlugin) == 0
+
+        container.register(IPlugin, PluginA)
+        assert container.count(IPlugin) == 1
+
+        container.register(IPlugin, PluginB)
+        assert container.count(IPlugin) == 2
+
+        container.register(IPlugin, PluginC)
+        assert container.count(IPlugin) == 3
+
+    def test_count_includes_parent_implementations(self) -> None:
+        """count() should include implementations from parent container."""
+        parent = Container()
+        parent.register(IPlugin, PluginA)
+
+        child = parent.create_child()
+        child.register(IPlugin, PluginB)
+
+        assert child.count(IPlugin) == 2
+
+    def test_count_includes_module_implementations(self) -> None:
+        """count() should include public implementations from modules."""
+        module = Module("plugins")
+        module.register(IPlugin, PluginA, public=True)
+        module.register(IPlugin, PluginB, public=True)
+
+        container = Container()
+        container.register(IPlugin, PluginC)
+        container.register_module(module)
+
+        assert container.count(IPlugin) == 3
+
+
+# =============================================================================
+# Test Classes: Edge Cases
+# =============================================================================
+
+
+class TestEdgeCases:
+    """Test edge cases and special scenarios."""
+
+    def test_get_all_with_instance_registrations(self) -> None:
+        """get_all() should work with pre-created instances."""
+        instance_a = PluginA()
+        instance_b = PluginB()
+
+        container = Container()
+        container.register_instance(IPlugin, instance_a)
+        container.register_instance(IPlugin, instance_b)
+
+        plugins = container.get_all(IPlugin)
+
+        assert len(plugins) == 2
+        assert instance_a in plugins
+        assert instance_b in plugins
+
+    def test_get_all_with_factory_registrations(self) -> None:
+        """get_all() should work with factory registrations."""
+        container = Container()
+
+        def create_a() -> IPlugin:
+            return PluginA()
+
+        def create_b() -> IPlugin:
+            return PluginB()
+
+        container.register_factory(IPlugin, create_a)
+        container.register_factory(IPlugin, create_b)
+
+        plugins = container.get_all(IPlugin)
+
+        assert len(plugins) == 2
+
+    def test_get_all_with_mixed_registration_types(self) -> None:
+        """get_all() should work with mixed registration types."""
+        instance_a = PluginA()
+
+        def create_b() -> IPlugin:
+            return PluginB()
+
+        container = Container()
+        container.register_instance(IPlugin, instance_a)
+        container.register_factory(IPlugin, create_b)
+        container.register(IPlugin, PluginC)
+
+        plugins = container.get_all(IPlugin)
+
+        assert len(plugins) == 3
+
+    def test_circular_dependency_in_collection_item(self) -> None:
+        """Circular dependency in a collection item should be detected."""
+
+        class ServiceA:
+            def __init__(self, b: "ServiceB") -> None:
+                self.b = b
+
+        class ServiceB:
+            def __init__(self, a: ServiceA) -> None:
+                self.a = a
+
+        container = Container()
+        container.register(ServiceA)
+        container.register(ServiceB)
+
+        from inversipy import CircularDependencyError
+
+        with pytest.raises(CircularDependencyError):
+            container.get_all(ServiceA)
+
+    def test_get_async_with_multiple_bindings_raises(self) -> None:
+        """get_async() should also raise AmbiguousDependencyError."""
+
+        @pytest.mark.asyncio
+        async def test() -> None:
+            container = Container()
+            container.register(IPlugin, PluginA)
+            container.register(IPlugin, PluginB)
+
+            with pytest.raises(AmbiguousDependencyError):
+                await container.get_async(IPlugin)
+
+    def test_repr_with_multiple_bindings(self) -> None:
+        """Container repr should handle multiple bindings gracefully."""
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+
+        repr_str = repr(container)
+        assert "Container" in repr_str
