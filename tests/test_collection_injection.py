@@ -19,11 +19,12 @@ from inversipy import (
 
 # These imports will fail until the feature is implemented
 try:
-    from inversipy import AmbiguousDependencyError, InjectAll
+    from inversipy import AmbiguousDependencyError, InjectAll, InjectAllNamed
 except ImportError:
     # Placeholder for tests to run (they will fail with appropriate errors)
     AmbiguousDependencyError = None  # type: ignore
     InjectAll = None  # type: ignore
+    InjectAllNamed = None  # type: ignore
 
 
 # =============================================================================
@@ -897,3 +898,319 @@ class TestEdgeCases:
 
         repr_str = repr(container)
         assert "Container" in repr_str
+
+
+# =============================================================================
+# Test Classes: Named Collection Injection
+# =============================================================================
+
+
+class TestNamedCollectionInjection:
+    """Test named collection injection feature."""
+
+    def test_get_all_with_name_returns_named_bindings(self) -> None:
+        """get_all(T, name='x') should return all bindings with that name."""
+        container = Container()
+        container.register(IPlugin, PluginA, name="core")
+        container.register(IPlugin, PluginB, name="core")
+        container.register(IPlugin, PluginC, name="optional")
+
+        core_plugins = container.get_all(IPlugin, name="core")
+
+        assert len(core_plugins) == 2
+        assert any(isinstance(p, PluginA) for p in core_plugins)
+        assert any(isinstance(p, PluginB) for p in core_plugins)
+        assert not any(isinstance(p, PluginC) for p in core_plugins)
+
+    def test_get_all_named_returns_empty_list_when_none(self) -> None:
+        """get_all(T, name='x') returns empty list when no named bindings exist."""
+        container = Container()
+        container.register(IPlugin, PluginA)  # Unnamed
+
+        plugins = container.get_all(IPlugin, name="nonexistent")
+
+        assert plugins == []
+        assert isinstance(plugins, list)
+
+    def test_get_all_named_preserves_registration_order(self) -> None:
+        """get_all(T, name='x') should preserve registration order."""
+        container = Container()
+        container.register(IPlugin, PluginA, name="ordered")
+        container.register(IPlugin, PluginB, name="ordered")
+        container.register(IPlugin, PluginC, name="ordered")
+
+        plugins = container.get_all(IPlugin, name="ordered")
+
+        assert isinstance(plugins[0], PluginA)
+        assert isinstance(plugins[1], PluginB)
+        assert isinstance(plugins[2], PluginC)
+
+    def test_get_all_named_does_not_include_unnamed(self) -> None:
+        """get_all(T, name='x') should not include unnamed bindings."""
+        container = Container()
+        container.register(IPlugin, PluginA)  # Unnamed
+        container.register(IPlugin, PluginB, name="group")
+        container.register(IPlugin, PluginC, name="group")
+
+        plugins = container.get_all(IPlugin, name="group")
+
+        assert len(plugins) == 2
+        assert not any(isinstance(p, PluginA) for p in plugins)
+
+    def test_get_all_named_does_not_include_other_names(self) -> None:
+        """get_all(T, name='x') should not include bindings with other names."""
+        container = Container()
+        container.register(IPlugin, PluginA, name="group1")
+        container.register(IPlugin, PluginB, name="group2")
+
+        plugins = container.get_all(IPlugin, name="group1")
+
+        assert len(plugins) == 1
+        assert isinstance(plugins[0], PluginA)
+
+    def test_count_with_name_returns_named_count(self) -> None:
+        """count(T, name='x') should return count of named bindings."""
+        container = Container()
+        container.register(IPlugin, PluginA, name="core")
+        container.register(IPlugin, PluginB, name="core")
+        container.register(IPlugin, PluginC)  # Unnamed
+
+        assert container.count(IPlugin, name="core") == 2
+        assert container.count(IPlugin) == 1  # Only unnamed
+
+    @pytest.mark.asyncio
+    async def test_get_all_async_with_name(self) -> None:
+        """get_all_async(T, name='x') should return all named bindings."""
+        container = Container()
+        container.register(IPlugin, PluginA, name="async_group")
+        container.register(IPlugin, PluginB, name="async_group")
+
+        plugins = await container.get_all_async(IPlugin, name="async_group")
+
+        assert len(plugins) == 2
+
+    def test_get_all_named_with_singleton_scope(self) -> None:
+        """Named collection should respect singleton scope."""
+        container = Container()
+        container.register(IPlugin, PluginA, name="single", scope=Scopes.SINGLETON)
+        container.register(IPlugin, PluginB, name="single", scope=Scopes.SINGLETON)
+
+        plugins1 = container.get_all(IPlugin, name="single")
+        plugins2 = container.get_all(IPlugin, name="single")
+
+        assert plugins1[0] is plugins2[0]
+        assert plugins1[1] is plugins2[1]
+
+    def test_get_all_named_with_transient_scope(self) -> None:
+        """Named collection should respect transient scope."""
+        container = Container()
+        container.register(IPlugin, PluginA, name="transient", scope=Scopes.TRANSIENT)
+
+        plugins1 = container.get_all(IPlugin, name="transient")
+        plugins2 = container.get_all(IPlugin, name="transient")
+
+        assert plugins1[0] is not plugins2[0]
+
+
+class TestInjectAllNamedTypeAlias:
+    """Test InjectAllNamed[T, Named('x')] type alias for property/constructor injection."""
+
+    def test_inject_all_named_property_injection(self) -> None:
+        """InjectAllNamed should work with Injectable property injection."""
+
+        class PluginManager(Injectable):
+            core_plugins: InjectAllNamed[IPlugin, Named("core")]
+
+            def run_core(self) -> list[str]:
+                return [p.execute() for p in self.core_plugins]
+
+        container = Container()
+        container.register(IPlugin, PluginA, name="core")
+        container.register(IPlugin, PluginB, name="core")
+        container.register(IPlugin, PluginC, name="optional")
+        container.register(PluginManager)
+
+        manager = container.get(PluginManager)
+
+        assert len(manager.core_plugins) == 2
+        results = manager.run_core()
+        assert "PluginA" in results
+        assert "PluginB" in results
+        assert "PluginC" not in results
+
+    def test_inject_all_named_constructor_injection(self) -> None:
+        """InjectAllNamed should work with constructor injection."""
+
+        class PluginRunner:
+            def __init__(self, plugins: InjectAllNamed[IPlugin, Named("runner")]) -> None:
+                self.plugins = plugins
+
+        container = Container()
+        container.register(IPlugin, PluginA, name="runner")
+        container.register(IPlugin, PluginB, name="runner")
+        container.register(PluginRunner)
+
+        runner = container.get(PluginRunner)
+
+        assert len(runner.plugins) == 2
+
+    def test_inject_all_named_with_empty_collection(self) -> None:
+        """InjectAllNamed should inject empty list when no matching named bindings."""
+
+        class OptionalManager(Injectable):
+            plugins: InjectAllNamed[IPlugin, Named("missing")]
+
+        container = Container()
+        container.register(OptionalManager)
+
+        manager = container.get(OptionalManager)
+
+        assert manager.plugins == []
+        assert isinstance(manager.plugins, list)
+
+    def test_inject_all_named_combined_with_inject_all(self) -> None:
+        """InjectAllNamed can be used alongside InjectAll."""
+
+        class ComplexManager(Injectable):
+            all_plugins: InjectAll[IPlugin]
+            core_plugins: InjectAllNamed[IPlugin, Named("core")]
+
+        container = Container()
+        container.register(IPlugin, PluginA)  # Unnamed
+        container.register(IPlugin, PluginB)  # Unnamed
+        container.register(IPlugin, PluginC, name="core")  # Named
+
+        # Note: Named bindings are separate from unnamed
+        container.register(IPlugin, PluginA, name="core")  # Named
+        container.register(ComplexManager)
+
+        manager = container.get(ComplexManager)
+
+        # all_plugins gets unnamed bindings
+        assert len(manager.all_plugins) == 2
+        # core_plugins gets named "core" bindings
+        assert len(manager.core_plugins) == 2
+
+    def test_inject_all_named_with_inject(self) -> None:
+        """InjectAllNamed can be used alongside regular Inject."""
+
+        class MixedService(Injectable):
+            core_plugins: InjectAllNamed[IPlugin, Named("core")]
+            primary: Inject[IService]
+
+        container = Container()
+        container.register(IPlugin, PluginA, name="core")
+        container.register(IPlugin, PluginB, name="core")
+        container.register(IService, ServiceImpl)
+        container.register(MixedService)
+
+        service = container.get(MixedService)
+
+        assert len(service.core_plugins) == 2
+        assert isinstance(service.primary, ServiceImpl)
+
+    def test_multiple_inject_all_named_different_groups(self) -> None:
+        """Multiple InjectAllNamed with different groups."""
+
+        class MultiGroupManager(Injectable):
+            core_plugins: InjectAllNamed[IPlugin, Named("core")]
+            optional_plugins: InjectAllNamed[IPlugin, Named("optional")]
+
+        container = Container()
+        container.register(IPlugin, PluginA, name="core")
+        container.register(IPlugin, PluginB, name="core")
+        container.register(IPlugin, PluginC, name="optional")
+        container.register(MultiGroupManager)
+
+        manager = container.get(MultiGroupManager)
+
+        assert len(manager.core_plugins) == 2
+        assert len(manager.optional_plugins) == 1
+        assert isinstance(manager.optional_plugins[0], PluginC)
+
+
+class TestNamedCollectionWithModules:
+    """Test named collection injection with modules."""
+
+    def test_module_get_all_with_name(self) -> None:
+        """Module get_all(T, name='x') should work with named bindings."""
+        module = Module("plugins")
+        module.register(IPlugin, PluginA, name="core", public=True)
+        module.register(IPlugin, PluginB, name="core", public=True)
+
+        plugins = module.get_all(IPlugin, name="core")
+
+        assert len(plugins) == 2
+
+    def test_module_count_with_name(self) -> None:
+        """Module count(T, name='x') should count named bindings."""
+        module = Module("plugins")
+        module.register(IPlugin, PluginA, name="core", public=True)
+        module.register(IPlugin, PluginB, name="core", public=True)
+        module.register(IPlugin, PluginC, public=True)
+
+        assert module.count(IPlugin, name="core") == 2
+        assert module.count(IPlugin) == 1
+
+    def test_container_aggregates_named_from_modules(self) -> None:
+        """Container should aggregate named implementations from modules."""
+        module = Module("plugins")
+        module.register(IPlugin, PluginA, name="core", public=True)
+        module.register(IPlugin, PluginB, name="core", public=True)
+
+        container = Container()
+        container.register(IPlugin, PluginC, name="core")
+        container.register_module(module)
+
+        plugins = container.get_all(IPlugin, name="core")
+
+        assert len(plugins) == 3
+
+    def test_parent_container_named_aggregation(self) -> None:
+        """Child container should aggregate named bindings from parent."""
+        parent = Container()
+        parent.register(IPlugin, PluginA, name="shared")
+
+        child = parent.create_child()
+        child.register(IPlugin, PluginB, name="shared")
+
+        plugins = child.get_all(IPlugin, name="shared")
+
+        assert len(plugins) == 2
+
+
+class TestNamedCollectionContainerRun:
+    """Test container.run() with named collection injection."""
+
+    def test_run_with_inject_all_named_parameter(self) -> None:
+        """container.run() should resolve InjectAllNamed parameters."""
+
+        def process_core(plugins: InjectAllNamed[IPlugin, Named("core")]) -> list[str]:
+            return [p.execute() for p in plugins]
+
+        container = Container()
+        container.register(IPlugin, PluginA, name="core")
+        container.register(IPlugin, PluginB, name="core")
+        container.register(IPlugin, PluginC, name="optional")
+
+        results = container.run(process_core)
+
+        assert len(results) == 2
+        assert "PluginA" in results
+        assert "PluginB" in results
+        assert "PluginC" not in results
+
+    @pytest.mark.asyncio
+    async def test_run_async_with_inject_all_named(self) -> None:
+        """container.run_async() should resolve InjectAllNamed parameters."""
+
+        def process_core(plugins: InjectAllNamed[IPlugin, Named("core")]) -> list[str]:
+            return [p.execute() for p in plugins]
+
+        container = Container()
+        container.register(IPlugin, PluginA, name="core")
+        container.register(IPlugin, PluginB, name="core")
+
+        results = await container.run_async(process_core)
+
+        assert len(results) == 2

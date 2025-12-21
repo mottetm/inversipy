@@ -681,11 +681,12 @@ class Container:
 
         return total
 
-    def get_all[T](self, interface: type[T]) -> list[T]:
+    def get_all[T](self, interface: type[T], *, name: str | None = None) -> list[T]:
         """Resolve all implementations of an interface.
 
         Args:
             interface: The interface type to resolve
+            name: Optional name for named collection (default: None for unnamed bindings)
 
         Returns:
             List of all registered implementations (empty if none)
@@ -694,11 +695,18 @@ class Container:
             container.register(IPlugin, PluginA)
             container.register(IPlugin, PluginB)
             plugins = container.get_all(IPlugin)  # [PluginA(), PluginB()]
+
+            # Named collections
+            container.register(IPlugin, CorePlugin, name="core")
+            core_plugins = container.get_all(IPlugin, name="core")
         """
         instances: list[T] = []
 
-        # Get from local bindings (unnamed only for collections)
-        bindings = self._bindings.get(interface, [])
+        # Determine the key based on whether name is provided
+        key: DependencyKey = (interface, name) if name is not None else interface
+
+        # Get from local bindings
+        bindings = self._bindings.get(key, [])
         for binding in bindings:
             instance = binding.create_instance(self)
             instances.append(instance)
@@ -707,31 +715,35 @@ class Container:
         for module in self._modules:
             if hasattr(module, "get_all"):
                 try:
-                    module_instances = module.get_all(interface)
+                    module_instances = module.get_all(interface, name=name)
                     instances.extend(module_instances)
                 except Exception:
                     pass
 
         # Get from parent container
         if self._parent is not None:
-            parent_instances = self._parent.get_all(interface)
+            parent_instances = self._parent.get_all(interface, name=name)
             instances.extend(parent_instances)
 
         return instances
 
-    async def get_all_async[T](self, interface: type[T]) -> list[T]:
+    async def get_all_async[T](self, interface: type[T], *, name: str | None = None) -> list[T]:
         """Resolve all implementations asynchronously.
 
         Args:
             interface: The interface type to resolve
+            name: Optional name for named collection (default: None for unnamed bindings)
 
         Returns:
             List of all registered implementations (empty if none)
         """
         instances: list[T] = []
 
-        # Get from local bindings (unnamed only for collections)
-        bindings = self._bindings.get(interface, [])
+        # Determine the key based on whether name is provided
+        key: DependencyKey = (interface, name) if name is not None else interface
+
+        # Get from local bindings
+        bindings = self._bindings.get(key, [])
         for binding in bindings:
             instance = await binding.create_instance_async(self)
             instances.append(instance)
@@ -740,14 +752,14 @@ class Container:
         for module in self._modules:
             if hasattr(module, "get_all_async"):
                 try:
-                    module_instances = await module.get_all_async(interface)
+                    module_instances = await module.get_all_async(interface, name=name)
                     instances.extend(module_instances)
                 except Exception:
                     pass
 
         # Get from parent container
         if self._parent is not None:
-            parent_instances = await self._parent.get_all_async(interface)
+            parent_instances = await self._parent.get_all_async(interface, name=name)
             instances.extend(parent_instances)
 
         return instances
@@ -815,10 +827,11 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
-                    # Check for InjectAll annotation first
-                    inject_all_type = self._extract_inject_all_type(param_type)
-                    if inject_all_type is not None:
-                        resolved_kwargs[param_name] = self.get_all(inject_all_type)
+                    # Check for InjectAll/InjectAllNamed annotation first
+                    inject_all_info = self._extract_inject_all_info(param_type)
+                    if inject_all_info is not None:
+                        item_type, coll_name = inject_all_info
+                        resolved_kwargs[param_name] = self.get_all(item_type, name=coll_name)
                         continue
 
                     # Check for Inject[T, Named(...)] annotations
@@ -921,10 +934,11 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
-                    # Check for InjectAll annotation first
-                    inject_all_type = self._extract_inject_all_type(param_type)
-                    if inject_all_type is not None:
-                        resolved_kwargs[param_name] = await self.get_all_async(inject_all_type)
+                    # Check for InjectAll/InjectAllNamed annotation first
+                    inject_all_info = self._extract_inject_all_info(param_type)
+                    if inject_all_info is not None:
+                        item_type, coll_name = inject_all_info
+                        resolved_kwargs[param_name] = await self.get_all_async(item_type, name=coll_name)
                         continue
 
                     # Check for Inject[T, Named(...)] annotations
@@ -986,7 +1000,7 @@ class Container:
             inject_fields: dict[str, tuple[type, str | None]] | None = getattr(
                 cls, "_inject_fields", None
             )
-            inject_all_fields: dict[str, type] | None = getattr(
+            inject_all_fields: dict[str, tuple[type, str | None]] | None = getattr(
                 cls, "_inject_all_fields", None
             )
 
@@ -1008,8 +1022,8 @@ class Container:
 
                 # Handle collection dependencies
                 if inject_all_fields:
-                    for field_name, item_type in inject_all_fields.items():
-                        kwargs[field_name] = self.get_all(item_type)
+                    for field_name, (item_type, coll_name) in inject_all_fields.items():
+                        kwargs[field_name] = self.get_all(item_type, name=coll_name)
 
                 return cls(**kwargs)
 
@@ -1043,10 +1057,11 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
-                    # Check for InjectAll annotation first
-                    inject_all_type = self._extract_inject_all_type(param_type)
-                    if inject_all_type is not None:
-                        kwargs[param_name] = self.get_all(inject_all_type)
+                    # Check for InjectAll/InjectAllNamed annotation first
+                    inject_all_info = self._extract_inject_all_info(param_type)
+                    if inject_all_info is not None:
+                        item_type, coll_name = inject_all_info
+                        kwargs[param_name] = self.get_all(item_type, name=coll_name)
                         continue
 
                     # Check for Inject annotation with optional Named qualifier
@@ -1108,7 +1123,7 @@ class Container:
             inject_fields: dict[str, tuple[type, str | None]] | None = getattr(
                 cls, "_inject_fields", None
             )
-            inject_all_fields: dict[str, type] | None = getattr(
+            inject_all_fields: dict[str, tuple[type, str | None]] | None = getattr(
                 cls, "_inject_all_fields", None
             )
 
@@ -1130,8 +1145,8 @@ class Container:
 
                 # Handle collection dependencies
                 if inject_all_fields:
-                    for field_name, item_type in inject_all_fields.items():
-                        kwargs[field_name] = await self.get_all_async(item_type)
+                    for field_name, (item_type, coll_name) in inject_all_fields.items():
+                        kwargs[field_name] = await self.get_all_async(item_type, name=coll_name)
 
                 return cls(**kwargs)
 
@@ -1165,10 +1180,11 @@ class Container:
                 param_type = type_hints.get(param_name)
 
                 if param_type is not None:
-                    # Check for InjectAll annotation first
-                    inject_all_type = self._extract_inject_all_type(param_type)
-                    if inject_all_type is not None:
-                        kwargs[param_name] = await self.get_all_async(inject_all_type)
+                    # Check for InjectAll/InjectAllNamed annotation first
+                    inject_all_info = self._extract_inject_all_info(param_type)
+                    if inject_all_info is not None:
+                        item_type, coll_name = inject_all_info
+                        kwargs[param_name] = await self.get_all_async(item_type, name=coll_name)
                         continue
 
                     # Check for Inject annotation with optional Named qualifier
@@ -1395,9 +1411,9 @@ class Container:
                             param_type = type_hints.get(param_name)
 
                             if param_type is not None:
-                                # Check for InjectAll - always valid (even if empty)
-                                inject_all_type = self._extract_inject_all_type(param_type)
-                                if inject_all_type is not None:
+                                # Check for InjectAll/InjectAllNamed - always valid (even if empty)
+                                inject_all_info = self._extract_inject_all_info(param_type)
+                                if inject_all_info is not None:
                                     continue
 
                                 # Check for Inject[T, Named(...)] annotations
@@ -1472,9 +1488,23 @@ class Container:
         Returns:
             The item type T if this is InjectAll[T], None otherwise
         """
+        result = self._extract_inject_all_info(type_hint)
+        if result is not None:
+            return result[0]
+        return None
+
+    def _extract_inject_all_info(self, type_hint: Any) -> tuple[type, str | None] | None:
+        """Extract item type and optional name from InjectAll or InjectAllNamed annotation.
+
+        Args:
+            type_hint: The type annotation to check
+
+        Returns:
+            Tuple of (item_type, name | None) if this is InjectAll/InjectAllNamed, None otherwise
+        """
         # Import here to avoid circular imports
-        from .decorators import extract_inject_all_type
-        return extract_inject_all_type(type_hint)
+        from .decorators import extract_inject_all_info
+        return extract_inject_all_info(type_hint)
 
     def __repr__(self) -> str:
         """Get string representation of the container."""

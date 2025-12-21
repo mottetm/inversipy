@@ -31,9 +31,12 @@ type Inject[T, *Ts] = Annotated[T, _inject_marker, *Ts]
 
 type InjectAll[T] = Annotated[list[T], _inject_all_marker]
 
+type InjectAllNamed[T, N] = Annotated[list[T], _inject_all_marker, N]
+
 # Store reference to the Inject TypeAliasType for runtime checks
 _InjectAliasType = Inject  # type: ignore[type-arg]
 _InjectAllAliasType = InjectAll  # type: ignore[type-arg]
+_InjectAllNamedAliasType = InjectAllNamed  # type: ignore[type-arg]
 """Type alias for dependency injection with optional qualifiers.
 
 Use Inject[T] to mark class attributes or function parameters for injection.
@@ -100,16 +103,16 @@ class Injectable:
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Called when a class inherits from Injectable.
 
-        Scans for Inject[Type], Inject[Type, Named("x")], and InjectAll[Type] attributes
-        and generates __init__.
+        Scans for Inject[Type], Inject[Type, Named("x")], InjectAll[Type],
+        and InjectAllNamed[Type, Named("x")] attributes and generates __init__.
         """
         super().__init_subclass__(**kwargs)
 
         # Scan class annotations for Inject and InjectAll markers
         # inject_fields stores (type, name | None) tuples for single dependencies
         inject_fields: dict[str, tuple[type[Any], str | None]] = {}
-        # inject_all_fields stores the item type for collection dependencies
-        inject_all_fields: dict[str, type[Any]] = {}
+        # inject_all_fields stores (item_type, name | None) tuples for collection dependencies
+        inject_all_fields: dict[str, tuple[type[Any], str | None]] = {}
 
         # Get type hints from the class to resolve type aliases
         # Use include_extras=True to preserve Annotated metadata
@@ -122,12 +125,25 @@ class Injectable:
         for attr_name, annotation in annotations.items():
             origin = get_origin(annotation)
 
+            # Check if this uses the InjectAllNamed TypeAliasType (Python 3.12+)
+            if origin is _InjectAllNamedAliasType:
+                args = get_args(annotation)
+                if args:
+                    # First arg is the item type, second is Named qualifier
+                    item_type = args[0]
+                    named_qualifier: str | None = None
+                    for arg in args[1:]:
+                        if isinstance(arg, Named):
+                            named_qualifier = arg.name
+                    inject_all_fields[attr_name] = (item_type, named_qualifier)
+                continue
+
             # Check if this uses the InjectAll TypeAliasType (Python 3.12+)
             if origin is _InjectAllAliasType:
                 args = get_args(annotation)
                 if args:
-                    # First arg is the item type
-                    inject_all_fields[attr_name] = args[0]
+                    # First arg is the item type, no name for unnamed
+                    inject_all_fields[attr_name] = (args[0], None)
                 continue
 
             # Check if this uses the Inject TypeAliasType (Python 3.12+)
@@ -138,7 +154,7 @@ class Injectable:
                     # First arg is the actual type
                     actual_type = args[0]
                     # Remaining args are qualifiers (e.g., Named)
-                    named_qualifier: str | None = None
+                    named_qualifier = None
                     for arg in args[1:]:
                         if isinstance(arg, Named):
                             named_qualifier = arg.name
@@ -154,29 +170,35 @@ class Injectable:
                     metadata = args[1:]
 
                     # Check for InjectAll marker first
+                    has_inject_all = False
+                    named_qualifier = None
                     for meta in metadata:
                         if isinstance(meta, _InjectAllMarker):
-                            # Extract T from list[T]
-                            list_origin = get_origin(actual_type)
-                            if list_origin is list:
-                                list_args = get_args(actual_type)
-                                if list_args:
-                                    inject_all_fields[attr_name] = list_args[0]
-                            break
+                            has_inject_all = True
+                        elif isinstance(meta, Named):
+                            named_qualifier = meta.name
+
+                    if has_inject_all:
+                        # Extract T from list[T]
+                        list_origin = get_origin(actual_type)
+                        if list_origin is list:
+                            list_args = get_args(actual_type)
+                            if list_args:
+                                inject_all_fields[attr_name] = (list_args[0], named_qualifier)
+                        continue
 
                     # Check for Inject marker and Named qualifier
-                    if attr_name not in inject_all_fields:
-                        has_inject = False
-                        named_qualifier = None
+                    has_inject = False
+                    named_qualifier = None
 
-                        for meta in metadata:
-                            if isinstance(meta, _InjectMarker):
-                                has_inject = True
-                            elif isinstance(meta, Named):
-                                named_qualifier = meta.name
+                    for meta in metadata:
+                        if isinstance(meta, _InjectMarker):
+                            has_inject = True
+                        elif isinstance(meta, Named):
+                            named_qualifier = meta.name
 
-                        if has_inject:
-                            inject_fields[attr_name] = (actual_type, named_qualifier)
+                    if has_inject:
+                        inject_fields[attr_name] = (actual_type, named_qualifier)
 
         # Store inject fields metadata on the class
         setattr(cls, "_inject_fields", inject_fields)
@@ -216,7 +238,7 @@ class Injectable:
                 name: typ for name, typ in zip(list(inject_fields.keys()), [t for t, _ in inject_fields.values()])
             }
             # Add inject_all fields with list[T] annotation
-            for name, item_type in inject_all_fields.items():
+            for name, (item_type, _) in inject_all_fields.items():
                 init_annotations[name] = list[item_type]  # type: ignore
             init_annotations["return"] = None
             new_init.__annotations__ = init_annotations
@@ -315,16 +337,56 @@ def extract_inject_all_type(type_hint: Any) -> type[Any] | None:
         >>> extract_inject_all_type(Inject[IPlugin])
         None
     """
+    result = extract_inject_all_info(type_hint)
+    if result is not None:
+        return result[0]
+    return None
+
+
+def extract_inject_all_info(type_hint: Any) -> tuple[type[Any], str | None] | None:
+    """Extract item type and optional name from InjectAll or InjectAllNamed annotation.
+
+    This helper function analyzes a type hint to determine if it's an InjectAll
+    or InjectAllNamed annotation and extracts the collection item type and optional name.
+
+    Args:
+        type_hint: The type annotation to analyze
+
+    Returns:
+        A tuple of (item_type, name | None) if this is InjectAll/InjectAllNamed, None otherwise.
+
+    Examples:
+        >>> extract_inject_all_info(InjectAll[IPlugin])
+        (IPlugin, None)
+
+        >>> extract_inject_all_info(InjectAllNamed[IPlugin, Named("core")])
+        (IPlugin, "core")
+
+        >>> extract_inject_all_info(list[IPlugin])
+        None
+    """
     origin = get_origin(type_hint)
+
+    # Check if this uses the InjectAllNamed TypeAliasType (Python 3.12+)
+    if origin is _InjectAllNamedAliasType:
+        args = get_args(type_hint)
+        if args:
+            item_type = args[0]
+            name: str | None = None
+            for arg in args[1:]:
+                if isinstance(arg, Named):
+                    name = arg.name
+            return (item_type, name)
+        return None
 
     # Check if this uses the InjectAll TypeAliasType (Python 3.12+)
     if origin is _InjectAllAliasType:
         args = get_args(type_hint)
         if args:
-            return args[0]
+            return (args[0], None)
         return None
 
-    # Also support raw Annotated[list[T], _InjectAllMarker] for compatibility
+    # Also support raw Annotated[list[T], _InjectAllMarker, ...] for compatibility
     if origin is Annotated:
         args = get_args(type_hint)
         if len(args) < 2:
@@ -333,14 +395,20 @@ def extract_inject_all_type(type_hint: Any) -> type[Any] | None:
         actual_type = args[0]  # list[T]
         metadata = args[1:]
 
+        has_inject_all = False
+        name = None
         for meta in metadata:
             if isinstance(meta, _InjectAllMarker):
-                # Extract T from list[T]
-                list_origin = get_origin(actual_type)
-                if list_origin is list:
-                    list_args = get_args(actual_type)
-                    if list_args:
-                        return list_args[0]
-                break
+                has_inject_all = True
+            elif isinstance(meta, Named):
+                name = meta.name
+
+        if has_inject_all:
+            # Extract T from list[T]
+            list_origin = get_origin(actual_type)
+            if list_origin is list:
+                list_args = get_args(actual_type)
+                if list_args:
+                    return (list_args[0], name)
 
     return None

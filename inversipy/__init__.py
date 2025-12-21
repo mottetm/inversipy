@@ -13,7 +13,15 @@ Inversipy provides a flexible dependency injection container with support for:
 """
 
 from .container import Binding, Container
-from .decorators import Inject, InjectAll, Injectable, extract_inject_info, extract_inject_all_type
+from .decorators import (
+    Inject,
+    InjectAll,
+    InjectAllNamed,
+    Injectable,
+    extract_inject_all_info,
+    extract_inject_all_type,
+    extract_inject_info,
+)
 from .exceptions import (
     AmbiguousDependencyError,
     CircularDependencyError,
@@ -46,9 +54,11 @@ __all__ = [
     # Dependency injection utilities
     "Inject",
     "InjectAll",
+    "InjectAllNamed",
     "Injectable",
     "extract_inject_info",
     "extract_inject_all_type",
+    "extract_inject_all_info",
     # Exceptions
     "InversipyError",
     "DependencyNotFoundError",
