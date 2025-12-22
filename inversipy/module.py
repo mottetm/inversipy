@@ -370,11 +370,11 @@ class Module(Container):
         """Get string representation of the module."""
 
         def key_name(key: DependencyKey) -> str:
-            if isinstance(key, tuple):
-                return f"{key[0].__name__}[{key[1]}]"
-            elif isinstance(key, type):
-                return key.__name__
-            return str(key)
+            match key:
+                case (t, name):
+                    return f"{t.__name__}[{name}]"  # type: ignore[union-attr]
+                case _:
+                    return key.__name__  # type: ignore[union-attr]
 
         public_deps = ", ".join(key_name(dep) for dep in self._public_keys)
         all_deps_count = len(self._bindings)

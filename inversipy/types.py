@@ -25,6 +25,7 @@ class Named:
     """
 
     __slots__ = ("name",)
+    __match_args__ = ("name",)
 
     def __init__(self, name: str) -> None:
         """Initialize a Named qualifier.
@@ -145,9 +146,8 @@ def get_type_from_key(key: DependencyKey) -> type:
     Raises:
         ValueError: If key is not a valid DependencyKey
     """
-    if isinstance(key, tuple):
-        return key[0]
-    elif isinstance(key, type):
-        return key
-    else:
-        raise ValueError(f"Invalid dependency key type: {type(key)}")
+    match key:
+        case (t, _):
+            return t  # type: ignore[return-value]
+        case _:
+            return key  # type: ignore[return-value]

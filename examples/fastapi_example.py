@@ -13,8 +13,6 @@ To run this example:
     uvicorn examples.fastapi_example:app --reload
 """
 
-from typing import Annotated
-
 try:
     from fastapi import FastAPI
 
@@ -127,7 +125,7 @@ if FASTAPI_AVAILABLE:
     @app.get("/users")
     @inject
     async def get_users(
-        service: Annotated[UserService, Inject],
+        service: Inject[UserService],
         limit: int = 10,
     ) -> dict[str, list[dict[str, str | int]]]:
         """Get all users with injected UserService.
@@ -146,7 +144,7 @@ if FASTAPI_AVAILABLE:
     @inject
     async def get_user(
         user_id: int,
-        service: Annotated[UserService, Inject],
+        service: Inject[UserService],
     ) -> dict[str, dict[str, str | int] | str]:
         """Get a specific user.
 
@@ -165,8 +163,8 @@ if FASTAPI_AVAILABLE:
     @app.get("/stats")
     @inject
     async def get_stats(
-        logger: Annotated[Logger, Inject],
-        db: Annotated[Database, Inject],
+        logger: Inject[Logger],
+        db: Inject[Database],
     ) -> dict[str, int]:
         """Get statistics about the application.
 
@@ -187,9 +185,9 @@ if FASTAPI_AVAILABLE:
     @inject
     async def log_activity(
         user_id: int,
-        service: Annotated[UserService, Inject],
-        logger: Annotated[Logger, Inject],
-        context: Annotated[RequestContext, Inject],
+        service: Inject[UserService],
+        logger: Inject[Logger],
+        context: Inject[RequestContext],
         activity: str = "viewed",
     ) -> dict[str, str]:
         """Log user activity.
