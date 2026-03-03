@@ -13,7 +13,7 @@ A powerful and type-safe dependency injection/IoC (Inversion of Control) library
 - **Property injection** - Injectable base class for clean, declarative dependency injection
 - **Named dependencies** - Register multiple implementations with names for disambiguation
 - **Collection injection** - Register multiple implementations and inject as a collection with `InjectAll`
-- **Named collections** - Group implementations by name and inject with `InjectAllNamed`
+- **Named collections** - Group implementations by name and inject with `InjectAll[T, Named("x")]`
 - **Async support** - First-class support for async dependencies
 - **Type-safe** - Full type hint support for better IDE integration
 - **Pure classes** - No container coupling - classes remain framework-agnostic
@@ -27,7 +27,9 @@ pip install inversipy
 For development:
 
 ```bash
-pip install inversipy[dev]
+git clone https://github.com/mottetm/inversipy.git
+cd inversipy
+poetry install
 ```
 
 ## Quick Start
@@ -56,7 +58,7 @@ class UserService:
 
 # Create container and register dependencies
 container = Container()
-container.register(Database, scope=SINGLETON)
+container.register(Database, scope=Scopes.SINGLETON)
 container.register(UserRepository)
 container.register(UserService)
 
@@ -84,7 +86,7 @@ This design eliminates code duplication while providing proper specialization - 
 The `Container` is the main component that manages dependency registration and resolution.
 
 ```python
-from inversipy import Container, Scopes, TRANSIENT
+from inversipy import Container, Scopes
 
 container = Container()
 
@@ -124,7 +126,7 @@ Creates one instance and reuses it for all requests:
 from inversipy import Container, Scopes
 
 container = Container()
-container.register(Database, scope=SINGLETON)
+container.register(Database, scope=Scopes.SINGLETON)
 
 db1 = container.get(Database)
 db2 = container.get(Database)
@@ -139,7 +141,7 @@ Creates a new instance for each request:
 from inversipy import Container, Scopes
 
 container = Container()
-container.register(RequestHandler, scope=TRANSIENT)
+container.register(RequestHandler, scope=Scopes.TRANSIENT)
 
 handler1 = container.get(RequestHandler)
 handler2 = container.get(RequestHandler)
@@ -154,7 +156,7 @@ Creates one instance per request/context using Python's `contextvars` module. **
 from inversipy import Container, Scopes
 
 container = Container()
-container.register(RequestService, scope=REQUEST)
+container.register(RequestService, scope=Scopes.REQUEST)
 
 # Automatic isolation - each async task gets its own instance
 async def handle_request():
@@ -235,13 +237,13 @@ app = container.get(AppService)    # From app_module
 Using ModuleBuilder:
 
 ```python
-from inversipy import ModuleBuilder, SINGLETON
+from inversipy import ModuleBuilder, Scopes
 
 module = (
     ModuleBuilder("Database")
-    .bind(DatabaseConnection, scope=SINGLETON)  # Private
+    .bind(DatabaseConnection, scope=Scopes.SINGLETON)  # Private
     .bind(QueryBuilder)  # Private
-    .bind_public(Database, scope=SINGLETON)  # Public
+    .bind_public(Database, scope=Scopes.SINGLETON)  # Public
     .bind_public(UserRepository)  # Public
     .build()
 )
@@ -256,8 +258,8 @@ from inversipy import Container, Scopes
 
 # Parent container with shared services
 parent = Container(name="Parent")
-parent.register(Database, scope=SINGLETON)
-parent.register(Config, scope=SINGLETON)
+parent.register(Database, scope=Scopes.SINGLETON)
+parent.register(Config, scope=Scopes.SINGLETON)
 
 # Child container for a specific context
 child = parent.create_child(name="RequestContainer")
@@ -330,7 +332,6 @@ result = container.run(handle_request, custom_arg="value")
 Property injection using `Injectable` base class:
 
 ```python
-from typing import Annotated
 from inversipy import Container, Injectable, Inject
 
 container = Container()
@@ -338,8 +339,8 @@ container.register(Database)
 container.register(Logger)
 
 class UserService(Injectable):
-    database: Annotated[Database, Inject]
-    logger: Annotated[Logger, Inject]
+    database: Inject[Database]
+    logger: Inject[Logger]
 
     def get_users(self) -> list:
         self.logger.info("Fetching users")
@@ -351,7 +352,7 @@ users = service.get_users()
 ```
 
 The `Injectable` base class automatically:
-- Scans for `Annotated[Type, Inject]` properties
+- Scans for `Inject[Type]` properties
 - Generates a constructor that accepts these dependencies as parameters
 - Keeps classes pure - they can be instantiated manually or via container
 
@@ -538,7 +539,7 @@ from inversipy import Container
 
 # Application-wide container
 app_container = Container(name="Application")
-app_container.register(Database, scope=SINGLETON)
+app_container.register(Database, scope=Scopes.SINGLETON)
 
 # Request-specific container
 def handle_request(request):
@@ -561,8 +562,8 @@ app = FastAPI()
 container = Container()
 
 # Register request-scoped services
-container.register(RequestLogger, scope=REQUEST)
-container.register(DatabaseSession, scope=REQUEST)
+container.register(RequestLogger, scope=Scopes.REQUEST)
+container.register(DatabaseSession, scope=Scopes.REQUEST)
 
 @app.get("/api/users")
 async def get_users():
@@ -722,10 +723,8 @@ The name combines "inversion" (as in Inversion of Control) with "py" (Python). I
 Inversipy provides seamless FastAPI integration with the `@inject` decorator:
 
 ```python
-from typing import Annotated
 from fastapi import FastAPI
-from inversipy import Container
-from inversipy.decorators import Inject
+from inversipy import Container, Inject
 from inversipy.fastapi import inject
 
 # Setup
@@ -739,8 +738,8 @@ app.state.container = container
 @app.get("/users")
 @inject
 async def get_users(
-    db: Annotated[Database, Inject],
-    logger: Annotated[Logger, Inject],
+    db: Inject[Database],
+    logger: Inject[Logger],
     limit: int = 10
 ):
     logger.info(f"Fetching {limit} users")
@@ -748,7 +747,7 @@ async def get_users(
 ```
 
 The `@inject` decorator:
-- Identifies parameters marked with `Annotated[Type, Inject]`
+- Identifies parameters marked with `Inject[Type]`
 - Resolves them from the container automatically
 - Leaves normal FastAPI parameters (query params, body, etc.) unchanged
 - Works with both sync and async route handlers
