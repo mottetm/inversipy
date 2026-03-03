@@ -1,9 +1,9 @@
 """Scope definitions for dependency injection."""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class Scopes(str, Enum):
+class Scopes(StrEnum):
     """Enum defining available dependency scopes.
 
     Scopes determine the lifecycle of resolved dependencies:
