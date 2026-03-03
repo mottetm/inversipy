@@ -12,6 +12,8 @@ Inversipy provides a flexible dependency injection container with support for:
 - Named dependencies for multiple implementations of the same interface
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 from .container import Binding, Container
 from .decorators import (
     Inject,
@@ -35,7 +37,10 @@ from .module import Module, ModuleBuilder
 from .scopes import Scopes
 from .types import DependencyKey, Factory, ModuleProtocol, Named
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("inversipy")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
 
 __all__ = [
     # Core classes
