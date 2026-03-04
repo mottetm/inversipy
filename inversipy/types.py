@@ -107,6 +107,42 @@ class ModuleProtocol(Protocol):
         """
         ...
 
+    def count(self, interface: type[Any], name: str | None = None) -> int:
+        """Count the number of public implementations registered for an interface.
+
+        Args:
+            interface: The type to count implementations for
+            name: Optional name qualifier for named bindings
+
+        Returns:
+            Number of registered public implementations
+        """
+        ...
+
+    def get_all[T](self, interface: type[T], *, name: str | None = None) -> list[T]:
+        """Resolve all public implementations of an interface synchronously.
+
+        Args:
+            interface: The type to resolve
+            name: Optional name qualifier for named bindings
+
+        Returns:
+            List of resolved instances
+        """
+        ...
+
+    async def get_all_async[T](self, interface: type[T], *, name: str | None = None) -> list[T]:
+        """Resolve all public implementations of an interface asynchronously.
+
+        Args:
+            interface: The type to resolve
+            name: Optional name qualifier for named bindings
+
+        Returns:
+            List of resolved instances
+        """
+        ...
+
 
 class Provider[T](Protocol):
     """Protocol for dependency providers."""
