@@ -144,13 +144,6 @@ class ModuleProtocol(Protocol):
         ...
 
 
-class Provider[T](Protocol):
-    """Protocol for dependency providers."""
-
-    def __call__(self) -> T:
-        """Provide an instance of the dependency."""
-        ...
-
 
 # Type alias for dependency identifiers
 # Can be: type alone, or (type, name) tuple for named bindings
