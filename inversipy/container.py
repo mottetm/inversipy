@@ -369,6 +369,7 @@ class Container:
         self._bindings: dict[DependencyKey, list[Binding]] = {}
         self._modules: list[ModuleProtocol] = []
         self._parent = parent
+        self._frozen = False
         self._resolution_stack_var: contextvars.ContextVar[list[DependencyKey]] = (
             contextvars.ContextVar(f"_resolution_stack_{id(self)}")
         )
@@ -397,6 +398,30 @@ class Container:
         """Get the parent container."""
         return self._parent
 
+    @property
+    def frozen(self) -> bool:
+        """Whether the container is frozen (read-only)."""
+        return self._frozen
+
+    def freeze(self) -> "Container":
+        """Freeze the container, preventing further registrations.
+
+        After freezing, any call to register(), register_factory(),
+        register_instance(), or register_module() will raise RegistrationError.
+
+        Returns:
+            Self for chaining
+        """
+        self._frozen = True
+        return self
+
+    def _check_not_frozen(self) -> None:
+        """Raise RegistrationError if the container is frozen."""
+        if self._frozen:
+            raise RegistrationError(
+                f"Cannot register dependencies: container '{self._name}' is frozen"
+            )
+
     def register[T](
         self,
         interface: type[T],
@@ -407,6 +432,7 @@ class Container:
         name: str | None = None,
     ) -> "Container":
         """Register a dependency in the container."""
+        self._check_not_frozen()
         if implementation is None and factory is None and instance is None:
             implementation = interface
 
@@ -443,6 +469,7 @@ class Container:
 
     def register_module(self, module: ModuleProtocol) -> "Container":
         """Register a module as a provider of dependencies."""
+        self._check_not_frozen()
         self._modules.append(module)
         return self
 
