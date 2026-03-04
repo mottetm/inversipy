@@ -545,8 +545,7 @@ class Container:
         total = len(self._bindings.get(key, []))
 
         for module in self._modules:
-            if hasattr(module, "count"):
-                total += module.count(interface, name=name)
+            total += module.count(interface, name=name)
 
         if self._parent is not None:
             total += self._parent.count(interface, name=name)
@@ -564,12 +563,11 @@ class Container:
             instances.append(instance)
 
         for module in self._modules:
-            if hasattr(module, "get_all"):
-                try:
-                    module_instances = module.get_all(interface, name=name)
-                    instances.extend(module_instances)
-                except DependencyNotFoundError:
-                    pass
+            try:
+                module_instances = module.get_all(interface, name=name)
+                instances.extend(module_instances)
+            except DependencyNotFoundError:
+                pass
 
         if self._parent is not None:
             parent_instances = self._parent.get_all(interface, name=name)
@@ -588,12 +586,11 @@ class Container:
             instances.append(instance)
 
         for module in self._modules:
-            if hasattr(module, "get_all_async"):
-                try:
-                    module_instances = await module.get_all_async(interface, name=name)
-                    instances.extend(module_instances)
-                except DependencyNotFoundError:
-                    pass
+            try:
+                module_instances = await module.get_all_async(interface, name=name)
+                instances.extend(module_instances)
+            except DependencyNotFoundError:
+                pass
 
         if self._parent is not None:
             parent_instances = await self._parent.get_all_async(interface, name=name)
@@ -856,7 +853,12 @@ class Container:
         return dependencies
 
     def _detect_cycles(self) -> list[list[type[Any]]]:
-        """Detect circular dependencies in the container."""
+        """Detect circular dependencies in the container.
+
+        Note: This method accesses module._bindings via hasattr checks because
+        cycle detection requires inspecting internal binding state. This is
+        intentional duck-typing — only Container-based modules support validation.
+        """
         graph: dict[type[Any], list[type[Any]]] = {}
 
         for key, bindings in self._bindings.items():
