@@ -3,10 +3,11 @@
 import asyncio
 import contextvars
 import inspect
+import types as types_mod
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Optional, get_type_hints
+from typing import Any, Optional, Union, get_args, get_origin, get_type_hints
 
 from .binding_strategies import (
     BindingStrategy,
@@ -49,6 +50,22 @@ class ParameterDependency:
     dep_name: str | None  # Named qualifier
     is_collection: bool  # True for InjectAll
     has_default: bool
+    is_optional: bool = False  # True for T | None annotations
+
+
+def _extract_optional_type(annotation: Any) -> type | None:
+    """Extract T from T | None or Optional[T] annotations.
+
+    Returns the inner type T if the annotation is an optional type,
+    or None if it's not an optional type.
+    """
+    origin = get_origin(annotation)
+    if origin is Union or origin is types_mod.UnionType:
+        args = get_args(annotation)
+        non_none_args = [a for a in args if a is not type(None)]
+        if len(non_none_args) == 1 and len(args) == 2:
+            return non_none_args[0]  # type: ignore[no-any-return]
+    return None
 
 
 @lru_cache(maxsize=256)
@@ -130,16 +147,30 @@ def analyze_parameters(
                 )
             )
         else:
-            # Regular type hint
-            dependencies.append(
-                ParameterDependency(
-                    name=param_name,
-                    dep_type=param_type,
-                    dep_name=None,
-                    is_collection=False,
-                    has_default=has_default,
+            # Check for Optional[T] / T | None
+            inner_type = _extract_optional_type(param_type)
+            if inner_type is not None:
+                dependencies.append(
+                    ParameterDependency(
+                        name=param_name,
+                        dep_type=inner_type,
+                        dep_name=None,
+                        is_collection=False,
+                        has_default=has_default,
+                        is_optional=True,
+                    )
                 )
-            )
+            else:
+                # Regular type hint
+                dependencies.append(
+                    ParameterDependency(
+                        name=param_name,
+                        dep_type=param_type,
+                        dep_name=None,
+                        is_collection=False,
+                        has_default=has_default,
+                    )
+                )
 
     return tuple(dependencies)
 
@@ -235,7 +266,9 @@ class Binding:
                     else:
                         kwargs[dep.name] = container.get(dep.dep_type, name=dep.dep_name)
                 except DependencyNotFoundError:
-                    if not dep.has_default:
+                    if dep.is_optional:
+                        kwargs[dep.name] = None
+                    elif not dep.has_default:
                         raise ResolutionError(
                             f"Cannot resolve factory parameter '{dep.name}' "
                             f"of type {_format_dependency(dep.dep_type, dep.dep_name)} "
@@ -298,7 +331,9 @@ class Binding:
                             dep.dep_type, name=dep.dep_name
                         )
                 except DependencyNotFoundError:
-                    if not dep.has_default:
+                    if dep.is_optional:
+                        kwargs[dep.name] = None
+                    elif not dep.has_default:
                         raise ResolutionError(
                             f"Cannot resolve factory parameter '{dep.name}' "
                             f"of type {_format_dependency(dep.dep_type, dep.dep_name)} "
@@ -620,7 +655,9 @@ class Container:
                     else:
                         resolved_kwargs[dep.name] = self.get(dep.dep_type, name=dep.dep_name)
                 except DependencyNotFoundError:
-                    if not dep.has_default:
+                    if dep.is_optional:
+                        resolved_kwargs[dep.name] = None
+                    elif not dep.has_default:
                         raise ResolutionError(
                             f"Cannot resolve parameter '{dep.name}' of type "
                             f"{_format_dependency(dep.dep_type, dep.dep_name)} "
@@ -666,7 +703,9 @@ class Container:
                             dep.dep_type, name=dep.dep_name
                         )
                 except DependencyNotFoundError:
-                    if not dep.has_default:
+                    if dep.is_optional:
+                        resolved_kwargs[dep.name] = None
+                    elif not dep.has_default:
                         raise ResolutionError(
                             f"Cannot resolve parameter '{dep.name}' of type "
                             f"{_format_dependency(dep.dep_type, dep.dep_name)} "
@@ -781,7 +820,9 @@ class Container:
                     else:
                         kwargs[dep.name] = self.get(dep.dep_type, name=dep.dep_name)
                 except DependencyNotFoundError:
-                    if not dep.has_default:
+                    if dep.is_optional:
+                        kwargs[dep.name] = None
+                    elif not dep.has_default:
                         raise ResolutionError(
                             f"Cannot resolve parameter '{dep.name}' of type "
                             f"{_format_dependency(dep.dep_type, dep.dep_name)} "
@@ -821,7 +862,9 @@ class Container:
                     else:
                         kwargs[dep.name] = await self.get_async(dep.dep_type, name=dep.dep_name)
                 except DependencyNotFoundError:
-                    if not dep.has_default:
+                    if dep.is_optional:
+                        kwargs[dep.name] = None
+                    elif not dep.has_default:
                         raise ResolutionError(
                             f"Cannot resolve parameter '{dep.name}' of type "
                             f"{_format_dependency(dep.dep_type, dep.dep_name)} "

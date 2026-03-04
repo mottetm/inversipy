@@ -144,7 +144,6 @@ class ModuleProtocol(Protocol):
         ...
 
 
-
 # Type alias for dependency identifiers
 # Can be: type alone, or (type, name) tuple for named bindings
 type DependencyKey = type | tuple[type, str]
