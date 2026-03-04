@@ -409,10 +409,18 @@ class Container:
         After freezing, any call to register(), register_factory(),
         register_instance(), or register_module() will raise RegistrationError.
 
+        Freezing cascades to all registered modules and to the parent
+        container, ensuring that no mutation to any dependency provider
+        can affect resolution from this container.
+
         Returns:
             Self for chaining
         """
         self._frozen = True
+        for module in self._modules:
+            module.freeze()
+        if self._parent is not None:
+            self._parent.freeze()
         return self
 
     def _check_not_frozen(self) -> None:
