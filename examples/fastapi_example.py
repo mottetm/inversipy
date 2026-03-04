@@ -18,7 +18,7 @@ try:
 
     from inversipy import Container, Scopes
     from inversipy.decorators import Inject
-    from inversipy.fastapi import inject
+    from inversipy.fastapi import bind, inject
 
     FASTAPI_AVAILABLE = True
 except ImportError:
@@ -113,8 +113,8 @@ if FASTAPI_AVAILABLE:
     container.register(RequestContext, scope=Scopes.REQUEST)
     container.register(UserService, scope=Scopes.REQUEST)
 
-    # Store container in app state
-    app.state.container = container
+    # Bind container to app
+    bind(app, container)
 
     # Routes using @inject decorator
     @app.get("/")
