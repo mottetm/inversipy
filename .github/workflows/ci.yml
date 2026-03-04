@@ -71,5 +71,5 @@ jobs:
       - name: Install dependencies
         run: poetry install
 
-      - name: Run tests
-        run: poetry run pytest tests/ -v --tb=short
+      - name: Run tests with coverage
+        run: poetry run pytest tests/ -v --tb=short --cov --cov-report=term-missing
