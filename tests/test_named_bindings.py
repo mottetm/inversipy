@@ -12,8 +12,8 @@ from inversipy import (
     Named,
     RegistrationError,
     Scopes,
-    extract_inject_info,
 )
+from inversipy.decorators import extract_inject_info
 
 
 # Test interfaces and implementations
