@@ -52,6 +52,9 @@ nav:
     - Optional Dependencies: injection/optional.md
   - Integrations:
     - FastAPI: integrations/fastapi.md
+    - Flask: integrations/flask.md
+    - Click: integrations/click.md
+    - Pytest: integrations/pytest.md
   - Advanced:
     - Validation: advanced/validation.md
     - Container Freezing: advanced/freezing.md
