@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from inversipy import Container
 from inversipy.decorators import Inject
-from inversipy.fastapi import inject
+from inversipy.fastapi import bind, inject
 
 
 class Database:
@@ -38,7 +38,7 @@ class TestFastAPIIntegration:
         app = FastAPI()
         container = Container()
         container.register(Database)
-        app.state.container = container
+        bind(app, container)
 
         @app.get("/users")
         @inject
@@ -57,7 +57,7 @@ class TestFastAPIIntegration:
         container = Container()
         container.register(Database)
         container.register(Logger)
-        app.state.container = container
+        bind(app, container)
 
         @app.get("/users")
         @inject
@@ -77,7 +77,7 @@ class TestFastAPIIntegration:
         container = Container()
         container.register(Database)
         container.register(Logger)
-        app.state.container = container
+        bind(app, container)
 
         @app.get("/users")
         @inject
@@ -102,7 +102,7 @@ class TestFastAPIIntegration:
         app = FastAPI()
         container = Container()
         container.register(Database)
-        app.state.container = container
+        bind(app, container)
 
         @app.get("/users")
         @inject
@@ -130,14 +130,14 @@ class TestFastAPIIntegration:
         with pytest.raises(RuntimeError) as exc_info:
             client.get("/test")
 
-        assert "Container not configured in app.state" in str(exc_info.value)
+        assert "Container not configured" in str(exc_info.value)
 
     def test_inject_preserves_function_metadata(self) -> None:
         """Test that @inject preserves function name and docstring."""
         app = FastAPI()
         container = Container()
         container.register(Database)
-        app.state.container = container
+        bind(app, container)
 
         @app.get("/users")
         @inject

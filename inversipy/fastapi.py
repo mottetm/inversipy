@@ -9,12 +9,22 @@ from .container import Container
 from .decorators import extract_inject_all_info, extract_inject_info
 
 try:
-    from fastapi import Depends, Request
+    from fastapi import Depends, FastAPI, Request
 except ImportError:
     raise ImportError(
         "FastAPI is required for inversipy.fastapi integration. "
         "Install it with: pip install fastapi"
     )
+
+
+def bind(app: "FastAPI", container: Container) -> None:
+    """Bind a container to a FastAPI application.
+
+    Args:
+        app: FastAPI application instance
+        container: Container to bind
+    """
+    app.state.container = container
 
 
 def get_container(request: Request) -> Container:
@@ -27,13 +37,10 @@ def get_container(request: Request) -> Container:
         Container instance stored in app.state
 
     Raises:
-        RuntimeError: If container hasn't been configured in app.state
+        RuntimeError: If container hasn't been configured
     """
     if not hasattr(request.app.state, "container"):
-        raise RuntimeError(
-            "Container not configured in app.state. "
-            "Set it with: app.state.container = Container()"
-        )
+        raise RuntimeError("Container not configured. " "Call bind(app, container) during setup.")
     container: Container = request.app.state.container
     return container
 

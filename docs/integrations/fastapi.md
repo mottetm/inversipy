@@ -7,13 +7,13 @@ Inversipy provides seamless FastAPI integration with the `@inject` decorator.
 ```python
 from fastapi import FastAPI
 from inversipy import Container, Inject
-from inversipy.fastapi import inject
+from inversipy.fastapi import bind, inject
 
 app = FastAPI()
 container = Container()
 container.register(Database)
 container.register(Logger)
-app.state.container = container
+bind(app, container)
 ```
 
 ## Route Handlers
