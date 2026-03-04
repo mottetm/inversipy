@@ -143,6 +143,13 @@ class ModuleProtocol(Protocol):
         """
         ...
 
+    def freeze(self) -> None:
+        """Freeze the module, preventing further registrations.
+
+        After freezing, any registration method should raise RegistrationError.
+        """
+        ...
+
 
 # Type alias for dependency identifiers
 # Can be: type alone, or (type, name) tuple for named bindings

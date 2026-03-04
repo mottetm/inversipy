@@ -108,3 +108,56 @@ class TestContainerFreeze:
         assert container.frozen is True
         service = container.get(OtherService)
         assert isinstance(service, OtherService)
+
+    def test_freeze_cascades_to_modules(self) -> None:
+        """Freezing a container also freezes its registered modules."""
+        module = Module("test")
+        module.register(SimpleService, public=True)
+
+        container = Container()
+        container.register_module(module)
+        container.freeze()
+
+        assert module.frozen is True
+        with pytest.raises(RegistrationError, match="frozen"):
+            module.register(OtherService, public=True)
+
+    def test_freeze_cascades_to_parent(self) -> None:
+        """Freezing a child container also freezes the parent."""
+        parent = Container()
+        parent.register(SimpleService)
+
+        child = parent.create_child()
+        child.freeze()
+
+        assert parent.frozen is True
+        with pytest.raises(RegistrationError, match="frozen"):
+            parent.register(OtherService)
+
+    def test_freeze_cascades_to_nested_modules(self) -> None:
+        """Freezing cascades through nested modules."""
+        inner = Module("inner")
+        inner.register(SimpleService, public=True)
+
+        outer = Module("outer")
+        outer.register_module(inner)
+
+        container = Container()
+        container.register_module(outer)
+        container.freeze()
+
+        assert outer.frozen is True
+        assert inner.frozen is True
+
+    def test_freeze_does_not_cascade_to_children(self) -> None:
+        """Freezing a parent does NOT freeze child containers."""
+        parent = Container()
+        parent.register(SimpleService)
+
+        child = parent.create_child()
+        child.register(OtherService)
+
+        parent.freeze()
+
+        assert child.frozen is False
+        child.register(SimpleService)
