@@ -1,6 +1,7 @@
 """Container implementation for dependency injection."""
 
 import asyncio
+import contextvars
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -333,7 +334,23 @@ class Container:
         self._bindings: dict[DependencyKey, list[Binding]] = {}
         self._modules: list[ModuleProtocol] = []
         self._parent = parent
-        self._resolution_stack: list[DependencyKey] = []
+        self._resolution_stack_var: contextvars.ContextVar[list[DependencyKey]] = (
+            contextvars.ContextVar(f"_resolution_stack_{id(self)}")
+        )
+
+    @property
+    def _resolution_stack(self) -> list[DependencyKey]:
+        """Get the resolution stack for the current thread/async context.
+
+        Each thread and async task gets its own independent stack, preventing
+        concurrent resolution calls from corrupting each other's cycle detection.
+        """
+        try:
+            return self._resolution_stack_var.get()
+        except LookupError:
+            stack: list[DependencyKey] = []
+            self._resolution_stack_var.set(stack)
+            return stack
 
     @property
     def name(self) -> str:
