@@ -270,34 +270,6 @@ def extract_inject_info(type_hint: Any) -> tuple[type[Any], str | None] | None:
     return None
 
 
-def extract_inject_all_type(type_hint: Any) -> type[Any] | None:
-    """Extract item type from InjectAll[T] -> T.
-
-    This helper function analyzes a type hint to determine if it's an InjectAll
-    annotation and extracts the collection item type.
-
-    Args:
-        type_hint: The type annotation to analyze
-
-    Returns:
-        The item type T if this is InjectAll[T], None otherwise.
-
-    Examples:
-        >>> extract_inject_all_type(InjectAll[IPlugin])
-        IPlugin
-
-        >>> extract_inject_all_type(list[IPlugin])
-        None
-
-        >>> extract_inject_all_type(Inject[IPlugin])
-        None
-    """
-    result = extract_inject_all_info(type_hint)
-    if result is not None:
-        return result[0]
-    return None
-
-
 def extract_inject_all_info(type_hint: Any) -> tuple[type[Any], str | None] | None:
     """Extract item type and optional name from InjectAll annotation.
 

@@ -349,10 +349,6 @@ class Binding:
                 raise
             raise ResolutionError(f"Failed to call factory for {self.key}: {e}")
 
-    def reset(self) -> None:
-        """Reset the binding's scope state."""
-        self._strategy.reset()
-
 
 class Container:
     """Dependency injection container.
@@ -1078,17 +1074,6 @@ class Container:
 
         if errors:
             raise ValidationError(errors)
-
-    def _extract_inject_all_type(self, type_hint: Any) -> type | None:
-        """Extract item type from InjectAll[T] -> T."""
-        result = self._extract_inject_all_info(type_hint)
-        if result is not None:
-            return result[0]
-        return None
-
-    def _extract_inject_all_info(self, type_hint: Any) -> tuple[type, str | None] | None:
-        """Extract item type and optional name from InjectAll annotation."""
-        return extract_inject_all_info(type_hint)
 
     def __repr__(self) -> str:
         """Get string representation of the container."""
