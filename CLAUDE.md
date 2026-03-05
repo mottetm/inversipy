@@ -1,5 +1,15 @@
 # Claude Agent Guidelines
 
+## Package Manager
+
+This project uses **uv** as its package manager. All commands should use `uv`, not `poetry` or `pip`.
+
+- `uv sync` - Install all dependencies
+- `uv run <cmd>` - Run a command in the project environment
+- `uv build` - Build sdist and wheel
+- `uv add <pkg>` - Add a dependency
+- `uv add --group dev <pkg>` - Add a dev dependency
+
 ## Commit Convention
 
 This project uses **Conventional Commits**. All commits MUST follow this format:
