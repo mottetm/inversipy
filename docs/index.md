@@ -4,6 +4,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/inversipy)](https://pypi.org/project/inversipy/)
 [![Python versions](https://img.shields.io/pypi/pyversions/inversipy)](https://pypi.org/project/inversipy/)
 [![License](https://img.shields.io/pypi/l/inversipy)](https://pypi.org/project/inversipy/)
+[![Coverage](https://codecov.io/gh/mottetm/inversipy/branch/main/graph/badge.svg)](https://codecov.io/gh/mottetm/inversipy)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://mottetm.github.io/inversipy/)
 
 A powerful and type-safe dependency injection/IoC (Inversion of Control) library for Python 3.12+.
