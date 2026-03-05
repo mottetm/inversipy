@@ -11,7 +11,8 @@ class TestPytestPlugin:
     """Test the pytest plugin using pytester."""
 
     def test_inject_resolves_dependency(self, pytester: pytest.Pytester) -> None:
-        pytester.makeconftest("""
+        pytester.makeconftest(
+            """
 import pytest
 from inversipy import Container
 
@@ -28,8 +29,10 @@ def container():
 @pytest.fixture
 def greeter_cls():
     return Greeter
-""")
-        pytester.makepyfile("""
+"""
+        )
+        pytester.makepyfile(
+            """
 from inversipy_pytest import inject
 
 def test_greet(container):
@@ -38,7 +41,8 @@ def test_greet(container):
 
     greeter = container.get(Greeter)
     assert greeter.greet("Alice") == "Hello, Alice!"
-""")
+"""
+        )
         result = pytester.runpytest("-v")
         result.assert_outcomes(passed=1)
 
@@ -179,22 +183,26 @@ def test_mixed(username, greeter: Inject[Greeter]):
 
     def test_default_container_fixture(self, pytester: pytest.Pytester) -> None:
         """The plugin provides a default empty container fixture."""
-        pytester.makepyfile("""
+        pytester.makepyfile(
+            """
 def test_container_exists(container):
     from inversipy import Container
     assert isinstance(container, Container)
-""")
+"""
+        )
         result = pytester.runpytest("-v")
         result.assert_outcomes(passed=1)
 
     def test_no_inject_passthrough(self, pytester: pytest.Pytester) -> None:
-        pytester.makepyfile("""
+        pytester.makepyfile(
+            """
 from inversipy_pytest import inject
 
 @inject
 def test_plain():
     assert True
-""")
+"""
+        )
         result = pytester.runpytest("-v")
         result.assert_outcomes(passed=1)
 
