@@ -94,3 +94,7 @@ This makes it easier to:
 - Review changes independently
 - Revert specific changes if needed
 - Understand the history of the codebase
+
+## Design Philosophy
+
+The type system serves as the configuration language for dependency injection. Classes declare dependencies through Python type annotations and remain completely unaware of the DI container — they are plain objects usable without the framework. Around this foundation, the library layers real encapsulation (private-by-default module bindings), pluggable lifecycle management (scopes as interchangeable strategies rather than a fixed hierarchy), and layered safety guarantees (static and runtime circular dependency detection, container freezing, and typed exceptions) — all while maintaining dual sync/async support. The result is a framework that combines zero-configuration autowiring with the structural guardrails needed for complex applications, without ever coupling application code to the container.
