@@ -73,7 +73,14 @@ jobs:
         run: uv sync
 
       - name: Run tests with coverage
-        run: uv run pytest tests/ -v --tb=short --cov --cov-report=term-missing --cov-report=xml
+        run: uv run pytest tests/ -v --tb=short --cov --cov-report=term-missing --cov-report=xml --junitxml=test-results.xml
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.python-version }}
+          path: test-results.xml
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13'
@@ -82,10 +89,40 @@ jobs:
           files: coverage.xml
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  test-report:
+    name: Test Report
+    if: ${{ !cancelled() }}
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      pull-requests: write
+      contents: read
+      actions: read
+    steps:
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-results-*
+          merge-multiple: true
+
+      - name: Convert JUnit XML to CTRF
+        run: npx junit-to-ctrf "*.xml" -o ctrf/ctrf-report.json
+
+      - name: Publish test report
+        uses: ctrf-io/github-test-reporter@v1
+        with:
+          report-path: "ctrf/*.json"
+          summary: true
+          pull-request-report: true
+          annotate: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   ci:
     name: CI
     if: always()
-    needs: [lint, typecheck, test]
+    needs: [lint, typecheck, test, test-report]
     runs-on: ubuntu-latest
     steps:
       - name: Check results
