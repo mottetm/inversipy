@@ -48,7 +48,6 @@ class BindingStrategy(ABC):
         pass
 
 
-
 class SingletonStrategy(BindingStrategy):
     """Singleton strategy - one instance per container.
 
@@ -153,4 +152,3 @@ class RequestStrategy(BindingStrategy):
                 instance = result
             self._context_instance.set(instance)
         return instance
-

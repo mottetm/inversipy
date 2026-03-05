@@ -312,9 +312,7 @@ class TestFindMarkers:
         from inversipy.decorators import _find_markers, _InjectMarker
         from inversipy.types import Named
 
-        has_inject, has_inject_all, named = _find_markers(
-            [_InjectMarker(), Named("db")]
-        )
+        has_inject, has_inject_all, named = _find_markers([_InjectMarker(), Named("db")])
         assert has_inject is True
         assert has_inject_all is False
         assert named == "db"
@@ -323,9 +321,7 @@ class TestFindMarkers:
         from inversipy.decorators import _find_markers, _InjectAllMarker
         from inversipy.types import Named
 
-        has_inject, has_inject_all, named = _find_markers(
-            [_InjectAllMarker(), Named("plugins")]
-        )
+        has_inject, has_inject_all, named = _find_markers([_InjectAllMarker(), Named("plugins")])
         assert has_inject is False
         assert has_inject_all is True
         assert named == "plugins"
@@ -434,9 +430,7 @@ class TestExtractInjectInfoRawAnnotated:
         class Database:
             pass
 
-        result = extract_inject_info(
-            Annotated[Database, _inject_marker, Named("primary")]
-        )
+        result = extract_inject_info(Annotated[Database, _inject_marker, Named("primary")])
         assert result is not None
         assert result[0] is Database
         assert result[1] == "primary"
@@ -464,9 +458,7 @@ class TestExtractInjectAllInfoRawAnnotated:
         class IPlugin:
             pass
 
-        result = extract_inject_all_info(
-            Annotated[list[IPlugin], _inject_all_marker]
-        )
+        result = extract_inject_all_info(Annotated[list[IPlugin], _inject_all_marker])
         assert result is not None
         assert result[0] is IPlugin
         assert result[1] is None
@@ -496,9 +488,7 @@ class TestExtractInjectAllInfoRawAnnotated:
             pass
 
         # Not a list type, should return None
-        result = extract_inject_all_info(
-            Annotated[IPlugin, _inject_all_marker]
-        )
+        result = extract_inject_all_info(Annotated[IPlugin, _inject_all_marker])
         assert result is None
 
     def test_raw_annotated_no_marker(self) -> None:
@@ -509,9 +499,7 @@ class TestExtractInjectAllInfoRawAnnotated:
         class IPlugin:
             pass
 
-        result = extract_inject_all_info(
-            Annotated[list[IPlugin], "some_metadata"]
-        )
+        result = extract_inject_all_info(Annotated[list[IPlugin], "some_metadata"])
         assert result is None
 
 
