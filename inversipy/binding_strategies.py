@@ -47,10 +47,6 @@ class BindingStrategy(ABC):
         """
         pass
 
-    @abstractmethod
-    def reset(self) -> None:
-        """Reset the strategy state."""
-        pass
 
 
 class SingletonStrategy(BindingStrategy):
@@ -93,10 +89,6 @@ class SingletonStrategy(BindingStrategy):
                     self._initialized = True
         return self._instance
 
-    def reset(self) -> None:
-        self._instance = None
-        self._initialized = False
-
 
 class TransientStrategy(BindingStrategy):
     """Transient strategy - new instance per request.
@@ -118,9 +110,6 @@ class TransientStrategy(BindingStrategy):
         if asyncio.iscoroutine(result):
             return await result
         return result
-
-    def reset(self) -> None:
-        pass  # Transient has no state to reset
 
 
 class RequestStrategy(BindingStrategy):
@@ -165,5 +154,3 @@ class RequestStrategy(BindingStrategy):
             self._context_instance.set(instance)
         return instance
 
-    def reset(self) -> None:
-        self._context_instance.set(None)
