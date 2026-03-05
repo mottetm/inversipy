@@ -1,14 +1,13 @@
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry]
+[project]
 name = "inversipy"
 version = "0.1.0"
 description = "A powerful and type-safe dependency injection/IoC library for Python"
 readme = "README.md"
 license = "MIT"
-authors = ["inversipy contributors"]
+requires-python = ">=3.12"
+authors = [
+    { name = "inversipy contributors" },
+]
 keywords = ["dependency-injection", "ioc", "inversion-of-control", "di", "container"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -19,30 +18,38 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
-packages = [{include = "inversipy"}, {include = "inversipy_pytest.py"}]
 
-[tool.poetry.plugins.pytest11]
-inversipy = "inversipy_pytest"
-
-[tool.poetry.urls]
+[project.urls]
 Homepage = "https://github.com/mottetm/inversipy"
 Repository = "https://github.com/mottetm/inversipy"
 
-[tool.poetry.dependencies]
-python = ">=3.12"
+[project.entry-points.pytest11]
+inversipy = "inversipy_pytest"
 
-[tool.poetry.group.dev.dependencies]
-pytest = ">=7.0.0"
-pytest-asyncio = ">=0.21.0"
-mypy = ">=1.0.0"
-black = ">=23.0.0"
-ruff = ">=0.1.0"
-pytest-cov = ">=4.0.0"
-fastapi = ">=0.100.0"
-click = ">=8.0.0"
-mkdocs-material = ">=9.0.0"
-httpx = ">=0.24.0"
-flask = "^3.1.3"
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "mypy>=1.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "pytest-cov>=4.0.0",
+    "fastapi>=0.100.0",
+    "click>=8.0.0",
+    "mkdocs-material>=9.0.0",
+    "httpx>=0.24.0",
+    "flask>=3.1.3,<4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["inversipy"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"inversipy_pytest.py" = "inversipy_pytest.py"
 
 [tool.black]
 line-length = 100
