@@ -48,7 +48,8 @@ class TestInjectTypeResolution:
 
     def test_inject_resolves_to_base_type(self) -> None:
         """Inject[T] should resolve to T, allowing attribute access on T."""
-        stdout, stderr, exit_code = run_mypy("""
+        stdout, stderr, exit_code = run_mypy(
+            """
             from inversipy import Inject
 
             class Database:
@@ -57,12 +58,14 @@ class TestInjectTypeResolution:
 
             def use_db(db: Inject[Database]) -> str:
                 return db.query("SELECT 1")
-        """)
+        """
+        )
         assert exit_code == 0, f"mypy failed:\nstdout: {stdout}\nstderr: {stderr}"
 
     def test_inject_with_named_resolves_to_base_type(self) -> None:
         """Inject[T, Named("x")] should resolve to T."""
-        stdout, stderr, exit_code = run_mypy("""
+        stdout, stderr, exit_code = run_mypy(
+            """
             from inversipy import Inject, Named
 
             class IDatabase:
@@ -71,12 +74,14 @@ class TestInjectTypeResolution:
 
             def use_db(db: Inject[IDatabase, Named("primary")]) -> str:
                 return db.query("SELECT 1")
-        """)
+        """
+        )
         assert exit_code == 0, f"mypy failed:\nstdout: {stdout}\nstderr: {stderr}"
 
     def test_inject_catches_wrong_attribute(self) -> None:
         """Inject[T] should still catch incorrect attribute access on T."""
-        stdout, _, exit_code = run_mypy("""
+        stdout, _, exit_code = run_mypy(
+            """
             from inversipy import Inject
 
             class Database:
@@ -85,13 +90,15 @@ class TestInjectTypeResolution:
 
             def use_db(db: Inject[Database]) -> str:
                 return db.nonexistent_method()
-        """)
+        """
+        )
         assert exit_code != 0, "mypy should have caught invalid attribute access"
         assert "nonexistent_method" in stdout
 
     def test_inject_catches_wrong_attribute_with_named(self) -> None:
         """Inject[T, Named("x")] should still catch incorrect attribute access on T."""
-        stdout, _, exit_code = run_mypy("""
+        stdout, _, exit_code = run_mypy(
+            """
             from inversipy import Inject, Named
 
             class Database:
@@ -100,7 +107,8 @@ class TestInjectTypeResolution:
 
             def use_db(db: Inject[Database, Named("primary")]) -> str:
                 return db.nonexistent_method()
-        """)
+        """
+        )
         assert exit_code != 0, "mypy should have caught invalid attribute access"
         assert "nonexistent_method" in stdout
 
@@ -110,12 +118,14 @@ class TestInjectNoArgs:
 
     def test_inject_without_args_fails(self) -> None:
         """Inject without type arguments should produce a mypy error."""
-        stdout, _, exit_code = run_mypy("""
+        stdout, _, exit_code = run_mypy(
+            """
             from inversipy import Inject
 
             def use_db(db: Inject) -> None:
                 pass
-        """)
+        """
+        )
         # Bare Inject (no subscript) should either error or at least not silently pass
         assert (
             exit_code != 0 or "error" in stdout.lower() or "Inject" in stdout
@@ -127,7 +137,8 @@ class TestInjectAllType:
 
     def test_inject_all_is_iterable(self) -> None:
         """InjectAll[T] should be iterable as list[T]."""
-        stdout, stderr, exit_code = run_mypy("""
+        stdout, stderr, exit_code = run_mypy(
+            """
             from inversipy import InjectAll
 
             class IPlugin:
@@ -137,12 +148,14 @@ class TestInjectAllType:
             def run_plugins(plugins: InjectAll[IPlugin]) -> None:
                 for plugin in plugins:
                     plugin.execute()
-        """)
+        """
+        )
         assert exit_code == 0, f"mypy failed:\nstdout: {stdout}\nstderr: {stderr}"
 
     def test_inject_all_catches_wrong_item_attribute(self) -> None:
         """InjectAll[T] items should be typed as T, catching invalid access."""
-        stdout, _, exit_code = run_mypy("""
+        stdout, _, exit_code = run_mypy(
+            """
             from inversipy import InjectAll
 
             class IPlugin:
@@ -152,7 +165,8 @@ class TestInjectAllType:
             def run_plugins(plugins: InjectAll[IPlugin]) -> None:
                 for plugin in plugins:
                     plugin.nonexistent_method()
-        """)
+        """
+        )
         assert exit_code != 0, "mypy should have caught invalid attribute access"
         assert "nonexistent_method" in stdout
 
@@ -162,7 +176,8 @@ class TestInjectablePropertyInjection:
 
     def test_injectable_with_inject_attributes(self) -> None:
         """Injectable class with Inject[T] attributes should type-check."""
-        stdout, stderr, exit_code = run_mypy("""
+        stdout, stderr, exit_code = run_mypy(
+            """
             from inversipy import Injectable, Inject
 
             class Logger:
@@ -180,12 +195,14 @@ class TestInjectablePropertyInjection:
                 def get_users(self) -> str:
                     self.logger.log("Getting users")
                     return self.database.query("SELECT * FROM users")
-        """)
+        """
+        )
         assert exit_code == 0, f"mypy failed:\nstdout: {stdout}\nstderr: {stderr}"
 
     def test_injectable_with_named_inject(self) -> None:
         """Injectable class with Inject[T, Named("x")] should type-check."""
-        stdout, stderr, exit_code = run_mypy("""
+        stdout, stderr, exit_code = run_mypy(
+            """
             from inversipy import Injectable, Inject, Named
 
             class IDatabase:
@@ -201,7 +218,8 @@ class TestInjectablePropertyInjection:
 
                 def write(self) -> str:
                     return self.primary_db.query("INSERT INTO t VALUES (1)")
-        """)
+        """
+        )
         assert exit_code == 0, f"mypy failed:\nstdout: {stdout}\nstderr: {stderr}"
 
 
