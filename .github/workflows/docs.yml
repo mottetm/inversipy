@@ -19,16 +19,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install mkdocs-material
-        run: pip install mkdocs-material
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Build docs
-        run: mkdocs build
+        run: uvx --from mkdocs-material mkdocs build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
