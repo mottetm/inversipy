@@ -11,7 +11,7 @@ For development:
 ```bash
 git clone https://github.com/mottetm/inversipy.git
 cd inversipy
-poetry install
+uv sync
 ```
 
 ## Your First Container
