@@ -407,3 +407,94 @@ class TestAsyncModuleOperations:
 
         assert isinstance(service1, PublicService)
         assert service1 is service2  # Should be singleton
+
+
+class TestExportNamedReExport:
+    """Test export_named() re-export from child module."""
+
+    def test_export_named_from_child_module(self) -> None:
+        """Re-export a named dependency from a child module via export_named()."""
+        child = Module("child")
+        child.register(PublicService, name="primary", public=True)
+
+        parent = Module("parent")
+        parent.register_module(child)
+        parent.export_named(PublicService, "primary")
+
+        container = Container()
+        container.register_module(parent)
+
+        service = container.get(PublicService, name="primary")
+        assert isinstance(service, PublicService)
+
+    def test_export_named_not_available_raises(self) -> None:
+        """export_named() raises when dependency not available anywhere."""
+        module = Module("test")
+
+        with pytest.raises(RegistrationError, match="Cannot export"):
+            module.export_named(PublicService, "nonexistent")
+
+
+class TestGetAllAsync:
+    """Test get_all_async() on module."""
+
+    @pytest.mark.asyncio
+    async def test_get_all_async_public(self) -> None:
+        """get_all_async() returns public implementations."""
+        module = Module("test")
+        module.register(PublicService, public=True)
+
+        container = Container()
+        container.register_module(module)
+
+        results = await container.get_all_async(PublicService)
+        assert len(results) == 1
+        assert isinstance(results[0], PublicService)
+
+    @pytest.mark.asyncio
+    async def test_get_all_async_empty_for_private(self) -> None:
+        """get_all_async() returns empty for private dependencies."""
+        module = Module("test")
+        module.register(PrivateService)  # private by default
+
+        container = Container()
+        container.register_module(module)
+
+        results = await container.get_all_async(PrivateService)
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_get_all_async_internal_access(self) -> None:
+        """get_all_async() allows internal access during resolution."""
+        module = Module("test")
+        module.register(PrivateService)
+
+        # Access internally (simulated by pushing to resolution stack)
+        module._resolution_stack.append(PrivateService)
+        try:
+            results = await module.get_all_async(PrivateService)
+            assert len(results) == 1
+        finally:
+            module._resolution_stack.pop()
+
+
+class TestModuleReprWithNamedDeps:
+    """Test __repr__ with named dependencies."""
+
+    def test_repr_with_named_deps(self) -> None:
+        """Module repr includes named dependency formatting."""
+        module = Module("test")
+        module.register(PublicService, name="primary", public=True)
+
+        repr_str = repr(module)
+        assert "Module(" in repr_str
+        assert "primary" in repr_str
+        assert "PublicService" in repr_str
+
+    def test_repr_with_unnamed_deps(self) -> None:
+        """Module repr includes unnamed dependency formatting."""
+        module = Module("test")
+        module.register(PublicService, public=True)
+
+        repr_str = repr(module)
+        assert "PublicService" in repr_str
