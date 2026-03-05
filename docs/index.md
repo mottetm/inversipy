@@ -25,6 +25,7 @@ A powerful and type-safe dependency injection/IoC (Inversion of Control) library
 - [Property injection](injection/property.md) via `Injectable` base class
 - [Named dependencies](injection/named.md) for multiple implementations
 - [Collection injection](injection/collection.md) with `InjectAll`
+- [Factory & Lazy injection](injection/factory-lazy.md) for deferred resolution
 - [Optional dependencies](injection/optional.md) with `T | None`
 - [Container freezing](advanced/freezing.md) for runtime safety
 - [FastAPI integration](integrations/fastapi.md)

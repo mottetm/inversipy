@@ -50,6 +50,7 @@ nav:
     - Function Injection: injection/function.md
     - Named Dependencies: injection/named.md
     - Collection Injection: injection/collection.md
+    - Factory & Lazy: injection/factory-lazy.md
     - Optional Dependencies: injection/optional.md
   - Integrations:
     - FastAPI: integrations/fastapi.md
