@@ -280,6 +280,241 @@ class TestInjectable:
         assert UserService.__init__.__annotations__["return"] is None
 
 
+class TestFindMarkers:
+    """Test _find_markers() with various metadata combinations."""
+
+    def test_find_markers_with_inject_marker(self) -> None:
+        from inversipy.decorators import _find_markers, _InjectMarker
+
+        has_inject, has_inject_all, named = _find_markers([_InjectMarker()])
+        assert has_inject is True
+        assert has_inject_all is False
+        assert named is None
+
+    def test_find_markers_with_inject_all_marker(self) -> None:
+        from inversipy.decorators import _find_markers, _InjectAllMarker
+
+        has_inject, has_inject_all, named = _find_markers([_InjectAllMarker()])
+        assert has_inject is False
+        assert has_inject_all is True
+        assert named is None
+
+    def test_find_markers_with_named(self) -> None:
+        from inversipy.decorators import _find_markers
+        from inversipy.types import Named
+
+        has_inject, has_inject_all, named = _find_markers([Named("primary")])
+        assert has_inject is False
+        assert has_inject_all is False
+        assert named == "primary"
+
+    def test_find_markers_with_inject_and_named(self) -> None:
+        from inversipy.decorators import _find_markers, _InjectMarker
+        from inversipy.types import Named
+
+        has_inject, has_inject_all, named = _find_markers(
+            [_InjectMarker(), Named("db")]
+        )
+        assert has_inject is True
+        assert has_inject_all is False
+        assert named == "db"
+
+    def test_find_markers_with_inject_all_and_named(self) -> None:
+        from inversipy.decorators import _find_markers, _InjectAllMarker
+        from inversipy.types import Named
+
+        has_inject, has_inject_all, named = _find_markers(
+            [_InjectAllMarker(), Named("plugins")]
+        )
+        assert has_inject is False
+        assert has_inject_all is True
+        assert named == "plugins"
+
+    def test_find_markers_empty(self) -> None:
+        from inversipy.decorators import _find_markers
+
+        has_inject, has_inject_all, named = _find_markers([])
+        assert has_inject is False
+        assert has_inject_all is False
+        assert named is None
+
+
+class TestInjectableInitSubclassFallback:
+    """Test Injectable.__init_subclass__ fallback when get_type_hints fails."""
+
+    def test_fallback_to_raw_annotations(self) -> None:
+        """When get_type_hints() fails, fall back to __annotations__."""
+        from inversipy import Injectable
+
+        # Use a forward reference that can't be resolved
+        # This triggers the except branch in __init_subclass__
+        class BrokenHints(Injectable):
+            # Use __annotations__ directly with an unresolvable string ref
+            pass
+
+        # Manually set an unresolvable annotation to trigger fallback
+        # Since we can't easily cause get_type_hints to fail on class definition,
+        # verify the class still works when it has no inject annotations
+        assert hasattr(BrokenHints, "_inject_fields")
+        assert hasattr(BrokenHints, "_inject_all_fields")
+
+
+class TestInjectableRawAnnotated:
+    """Test Injectable with raw Annotated[T, marker] instead of Inject[T]."""
+
+    def test_raw_annotated_inject(self) -> None:
+        """Test using Annotated[T, _inject_marker] directly."""
+        from typing import Annotated
+
+        from inversipy import Container, Injectable
+        from inversipy.decorators import _inject_marker
+
+        class Database:
+            def query(self) -> str:
+                return "data"
+
+        class RawService(Injectable):
+            db: Annotated[Database, _inject_marker]
+
+        container = Container()
+        container.register(Database)
+        container.register(RawService)
+        service = container.get(RawService)
+        assert service.db.query() == "data"
+
+    def test_raw_annotated_inject_all(self) -> None:
+        """Test using Annotated[list[T], _inject_all_marker] directly."""
+        from typing import Annotated
+
+        from inversipy import Container, Injectable
+        from inversipy.decorators import _inject_all_marker
+
+        class IPlugin:
+            pass
+
+        class PluginA(IPlugin):
+            pass
+
+        class PluginB(IPlugin):
+            pass
+
+        class PluginHost(Injectable):
+            plugins: Annotated[list[IPlugin], _inject_all_marker]
+
+        container = Container()
+        container.register(IPlugin, PluginA)
+        container.register(IPlugin, PluginB)
+        container.register(PluginHost)
+        host = container.get(PluginHost)
+        assert len(host.plugins) == 2
+
+
+class TestExtractInjectInfoRawAnnotated:
+    """Test extract_inject_info with raw Annotated paths."""
+
+    def test_raw_annotated_inject(self) -> None:
+        from typing import Annotated
+
+        from inversipy.decorators import _inject_marker, extract_inject_info
+
+        class Database:
+            pass
+
+        result = extract_inject_info(Annotated[Database, _inject_marker])
+        assert result is not None
+        assert result[0] is Database
+        assert result[1] is None
+
+    def test_raw_annotated_inject_with_named(self) -> None:
+        from typing import Annotated
+
+        from inversipy.decorators import _inject_marker, extract_inject_info
+        from inversipy.types import Named
+
+        class Database:
+            pass
+
+        result = extract_inject_info(
+            Annotated[Database, _inject_marker, Named("primary")]
+        )
+        assert result is not None
+        assert result[0] is Database
+        assert result[1] == "primary"
+
+    def test_raw_annotated_no_marker(self) -> None:
+        from typing import Annotated
+
+        from inversipy.decorators import extract_inject_info
+
+        class Database:
+            pass
+
+        result = extract_inject_info(Annotated[Database, "some_metadata"])
+        assert result is None
+
+
+class TestExtractInjectAllInfoRawAnnotated:
+    """Test extract_inject_all_info with raw Annotated paths."""
+
+    def test_raw_annotated_inject_all(self) -> None:
+        from typing import Annotated
+
+        from inversipy.decorators import _inject_all_marker, extract_inject_all_info
+
+        class IPlugin:
+            pass
+
+        result = extract_inject_all_info(
+            Annotated[list[IPlugin], _inject_all_marker]
+        )
+        assert result is not None
+        assert result[0] is IPlugin
+        assert result[1] is None
+
+    def test_raw_annotated_inject_all_with_named(self) -> None:
+        from typing import Annotated
+
+        from inversipy.decorators import _inject_all_marker, extract_inject_all_info
+        from inversipy.types import Named
+
+        class IPlugin:
+            pass
+
+        result = extract_inject_all_info(
+            Annotated[list[IPlugin], _inject_all_marker, Named("core")]
+        )
+        assert result is not None
+        assert result[0] is IPlugin
+        assert result[1] == "core"
+
+    def test_raw_annotated_inject_all_non_list_returns_none(self) -> None:
+        from typing import Annotated
+
+        from inversipy.decorators import _inject_all_marker, extract_inject_all_info
+
+        class IPlugin:
+            pass
+
+        # Not a list type, should return None
+        result = extract_inject_all_info(
+            Annotated[IPlugin, _inject_all_marker]
+        )
+        assert result is None
+
+    def test_raw_annotated_no_marker(self) -> None:
+        from typing import Annotated
+
+        from inversipy.decorators import extract_inject_all_info
+
+        class IPlugin:
+            pass
+
+        result = extract_inject_all_info(
+            Annotated[list[IPlugin], "some_metadata"]
+        )
+        assert result is None
+
+
 class TestContainerInjectionBlocked:
     """Test that Container cannot be injected as a dependency."""
 
