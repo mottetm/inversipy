@@ -25,7 +25,14 @@ from .exceptions import (
     ValidationError,
 )
 from .scopes import Scopes
-from .types import DependencyKey, Factory, ModuleProtocol, get_type_from_key, make_key
+from .types import (
+    DependencyKey,
+    Factory,
+    FactoryCallable,
+    ModuleProtocol,
+    get_type_from_key,
+    make_key,
+)
 
 
 class _MissingType:
@@ -51,6 +58,7 @@ class ParameterDependency:
     is_collection: bool  # True for InjectAll
     has_default: bool
     is_optional: bool = False  # True for T | None annotations
+    wrapper_type: type | None = None  # Factory
 
 
 def _extract_optional_type(annotation: Any) -> type | None:
@@ -65,6 +73,30 @@ def _extract_optional_type(annotation: Any) -> type | None:
         non_none_args = [a for a in args if a is not type(None)]
         if len(non_none_args) == 1 and len(args) == 2:
             return non_none_args[0]  # type: ignore[no-any-return]
+    return None
+
+
+def _make_wrapper(
+    wrapper_type: type, dep_type: type, dep_name: str | None, container: "Container"
+) -> Factory:  # type: ignore[type-arg]
+    """Create a Factory wrapper that resolves from the container."""
+
+    def resolver(_t: type = dep_type, _n: str | None = dep_name) -> Any:
+        return container.get(_t, name=_n)
+
+    return Factory(resolver)
+
+
+def _extract_wrapper_type(annotation: Any) -> tuple[type, type] | None:
+    """Extract T and wrapper class from Factory[T] annotations.
+
+    Returns (inner_type, wrapper_class) or None if not a wrapper type.
+    """
+    origin = get_origin(annotation)
+    if origin is Factory:
+        args = get_args(annotation)
+        if args:
+            return args[0], origin
     return None
 
 
@@ -137,23 +169,51 @@ def analyze_parameters(
         inject_info = extract_inject_info(param_type)
         if inject_info:
             actual_type, dep_name = inject_info
-            dependencies.append(
-                ParameterDependency(
-                    name=param_name,
-                    dep_type=actual_type,
-                    dep_name=dep_name,
-                    is_collection=False,
-                    has_default=has_default,
-                )
-            )
-        else:
-            # Check for Optional[T] / T | None
-            inner_type = _extract_optional_type(param_type)
-            if inner_type is not None:
+            # Check if the injected type is Factory[T]
+            wrapper = _extract_wrapper_type(actual_type)
+            if wrapper is not None:
+                inner_type, wrapper_cls = wrapper
                 dependencies.append(
                     ParameterDependency(
                         name=param_name,
                         dep_type=inner_type,
+                        dep_name=dep_name,
+                        is_collection=False,
+                        has_default=has_default,
+                        wrapper_type=wrapper_cls,
+                    )
+                )
+            else:
+                dependencies.append(
+                    ParameterDependency(
+                        name=param_name,
+                        dep_type=actual_type,
+                        dep_name=dep_name,
+                        is_collection=False,
+                        has_default=has_default,
+                    )
+                )
+        else:
+            # Check for Factory[T] (bare, without Inject)
+            wrapper = _extract_wrapper_type(param_type)
+            if wrapper is not None:
+                inner_type, wrapper_cls = wrapper
+                dependencies.append(
+                    ParameterDependency(
+                        name=param_name,
+                        dep_type=inner_type,
+                        dep_name=None,
+                        is_collection=False,
+                        has_default=has_default,
+                        wrapper_type=wrapper_cls,
+                    )
+                )
+            # Check for Optional[T] / T | None
+            elif (optional_type := _extract_optional_type(param_type)) is not None:
+                dependencies.append(
+                    ParameterDependency(
+                        name=param_name,
+                        dep_type=optional_type,
                         dep_name=None,
                         is_collection=False,
                         has_default=has_default,
@@ -185,7 +245,7 @@ class Binding:
     def __init__(
         self,
         key: DependencyKey,
-        factory: Factory[Any] | None = None,
+        factory: FactoryCallable[Any] | None = None,
         implementation: type[Any] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
         instance: Any | None = None,
@@ -260,6 +320,12 @@ class Binding:
                         f"and no default value for {self.key}"
                     )
 
+                if dep.wrapper_type is not None:
+                    kwargs[dep.name] = _make_wrapper(
+                        dep.wrapper_type, dep.dep_type, dep.dep_name, container
+                    )
+                    continue
+
                 try:
                     if dep.is_collection:
                         kwargs[dep.name] = container.get_all(dep.dep_type, name=dep.dep_name)
@@ -320,6 +386,12 @@ class Binding:
                         f"Factory parameter '{dep.name}' has no type hint "
                         f"and no default value for {self.key}"
                     )
+
+                if dep.wrapper_type is not None:
+                    kwargs[dep.name] = _make_wrapper(
+                        dep.wrapper_type, dep.dep_type, dep.dep_name, container
+                    )
+                    continue
 
                 try:
                     if dep.is_collection:
@@ -430,7 +502,7 @@ class Container:
         self,
         interface: type[T],
         implementation: type[T] | None = None,
-        factory: Factory[T] | None = None,
+        factory: FactoryCallable[T] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
         instance: T | None = None,
         name: str | None = None,
@@ -458,7 +530,7 @@ class Container:
     def register_factory[T](
         self,
         interface: type[T],
-        factory: Factory[T],
+        factory: FactoryCallable[T],
         scope: Scopes = Scopes.TRANSIENT,
         name: str | None = None,
     ) -> "Container":
@@ -680,6 +752,12 @@ class Container:
                         f"has no type annotation and no default value"
                     )
 
+                if dep.wrapper_type is not None:
+                    resolved_kwargs[dep.name] = _make_wrapper(
+                        dep.wrapper_type, dep.dep_type, dep.dep_name, self
+                    )
+                    continue
+
                 try:
                     if dep.is_collection:
                         resolved_kwargs[dep.name] = self.get_all(dep.dep_type, name=dep.dep_name)
@@ -723,6 +801,12 @@ class Container:
                         f"Parameter '{dep.name}' of function '{func.__name__}' "
                         f"has no type annotation and no default value"
                     )
+
+                if dep.wrapper_type is not None:
+                    resolved_kwargs[dep.name] = _make_wrapper(
+                        dep.wrapper_type, dep.dep_type, dep.dep_name, self
+                    )
+                    continue
 
                 try:
                     if dep.is_collection:
@@ -777,14 +861,19 @@ class Container:
 
         if inject_fields:
             for field_name, (field_type, dep_name) in inject_fields.items():
-                try:
-                    kwargs[field_name] = self.get(field_type, name=dep_name)
-                except DependencyNotFoundError:
-                    raise ResolutionError(
-                        f"Cannot resolve dependency '{field_name}' of type "
-                        f"{_format_dependency(field_type, dep_name)} "
-                        f"for class '{cls.__name__}'"
-                    )
+                wrapper = _extract_wrapper_type(field_type)
+                if wrapper is not None:
+                    inner_type, wrapper_cls = wrapper
+                    kwargs[field_name] = _make_wrapper(wrapper_cls, inner_type, dep_name, self)
+                else:
+                    try:
+                        kwargs[field_name] = self.get(field_type, name=dep_name)
+                    except DependencyNotFoundError:
+                        raise ResolutionError(
+                            f"Cannot resolve dependency '{field_name}' of type "
+                            f"{_format_dependency(field_type, dep_name)} "
+                            f"for class '{cls.__name__}'"
+                        )
 
         if inject_all_fields:
             for field_name, (item_type, coll_name) in inject_all_fields.items():
@@ -810,14 +899,19 @@ class Container:
 
         if inject_fields:
             for field_name, (field_type, dep_name) in inject_fields.items():
-                try:
-                    kwargs[field_name] = await self.get_async(field_type, name=dep_name)
-                except DependencyNotFoundError:
-                    raise ResolutionError(
-                        f"Cannot resolve dependency '{field_name}' of type "
-                        f"{_format_dependency(field_type, dep_name)} "
-                        f"for class '{cls.__name__}'"
-                    )
+                wrapper = _extract_wrapper_type(field_type)
+                if wrapper is not None:
+                    inner_type, wrapper_cls = wrapper
+                    kwargs[field_name] = _make_wrapper(wrapper_cls, inner_type, dep_name, self)
+                else:
+                    try:
+                        kwargs[field_name] = await self.get_async(field_type, name=dep_name)
+                    except DependencyNotFoundError:
+                        raise ResolutionError(
+                            f"Cannot resolve dependency '{field_name}' of type "
+                            f"{_format_dependency(field_type, dep_name)} "
+                            f"for class '{cls.__name__}'"
+                        )
 
         if inject_all_fields:
             for field_name, (item_type, coll_name) in inject_all_fields.items():
@@ -844,6 +938,12 @@ class Container:
                         f"Parameter '{dep.name}' of class '{cls.__name__}' "
                         f"has no type annotation and no default value"
                     )
+
+                if dep.wrapper_type is not None:
+                    kwargs[dep.name] = _make_wrapper(
+                        dep.wrapper_type, dep.dep_type, dep.dep_name, self
+                    )
+                    continue
 
                 try:
                     if dep.is_collection:
@@ -886,6 +986,12 @@ class Container:
                         f"Parameter '{dep.name}' of class '{cls.__name__}' "
                         f"has no type annotation and no default value"
                     )
+
+                if dep.wrapper_type is not None:
+                    kwargs[dep.name] = _make_wrapper(
+                        dep.wrapper_type, dep.dep_type, dep.dep_name, self
+                    )
+                    continue
 
                 try:
                     if dep.is_collection:

@@ -3,7 +3,22 @@
 from collections.abc import Callable
 from typing import Any, Protocol
 
-type Factory[T] = Callable[..., T]
+type FactoryCallable[T] = Callable[..., T]
+
+
+class Factory[T]:
+    """Callable wrapper injected by the container.
+
+    Each call resolves T from the container, respecting registered scopes.
+    """
+
+    __slots__ = ("_resolver",)
+
+    def __init__(self, resolver: Callable[[], T]) -> None:
+        self._resolver = resolver
+
+    def __call__(self) -> T:
+        return self._resolver()
 
 
 class Named:
