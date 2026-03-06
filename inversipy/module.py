@@ -5,7 +5,7 @@ from typing import Any
 from .container import Container
 from .exceptions import DependencyNotFoundError, RegistrationError
 from .scopes import Scopes
-from .types import DependencyKey, Factory, make_key
+from .types import DependencyKey, FactoryCallable, make_key
 
 
 class Module(Container):
@@ -32,7 +32,7 @@ class Module(Container):
         self,
         interface: type[T],
         implementation: type[T] | None = None,
-        factory: Factory[T] | None = None,
+        factory: FactoryCallable[T] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
         instance: T | None = None,
         name: str | None = None,
@@ -76,7 +76,7 @@ class Module(Container):
     def register_factory[T](
         self,
         interface: type[T],
-        factory: Factory[T],
+        factory: FactoryCallable[T],
         scope: Scopes = Scopes.TRANSIENT,
         name: str | None = None,
         *,
@@ -400,7 +400,7 @@ class ModuleBuilder:
         self,
         interface: type[T],
         implementation: type[T] | None = None,
-        factory: Factory[T] | None = None,
+        factory: FactoryCallable[T] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
         instance: T | None = None,
         name: str | None = None,
@@ -433,7 +433,7 @@ class ModuleBuilder:
         self,
         interface: type[T],
         implementation: type[T] | None = None,
-        factory: Factory[T] | None = None,
+        factory: FactoryCallable[T] | None = None,
         scope: Scopes = Scopes.TRANSIENT,
         instance: T | None = None,
         name: str | None = None,
