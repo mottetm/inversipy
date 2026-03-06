@@ -29,6 +29,7 @@ from .types import (
     DependencyKey,
     Factory,
     FactoryCallable,
+    Lazy,
     ModuleProtocol,
     get_type_from_key,
     make_key,
@@ -58,7 +59,7 @@ class ParameterDependency:
     is_collection: bool  # True for InjectAll
     has_default: bool
     is_optional: bool = False  # True for T | None annotations
-    wrapper_type: type | None = None  # Factory
+    wrapper_type: type | None = None  # Factory or Lazy
 
 
 def _extract_optional_type(annotation: Any) -> type | None:
@@ -78,22 +79,29 @@ def _extract_optional_type(annotation: Any) -> type | None:
 
 def _make_wrapper(
     wrapper_type: type, dep_type: type, dep_name: str | None, container: "Container"
-) -> Factory:  # type: ignore[type-arg]
-    """Create a Factory wrapper that resolves from the container."""
+) -> Factory | Lazy:  # type: ignore[type-arg]
+    """Create a Factory or Lazy wrapper that resolves from the container."""
 
     def resolver(_t: type = dep_type, _n: str | None = dep_name) -> Any:
         return container.get(_t, name=_n)
 
-    return Factory(resolver)
+    if wrapper_type is Factory:
+        return Factory(resolver)
+
+    key = make_key(dep_type, dep_name)
+    binding = container._find_binding(key)
+    if binding is not None:
+        return binding.create_lazy_wrapper(container, dep_type, dep_name)
+    return Lazy(resolver)
 
 
 def _extract_wrapper_type(annotation: Any) -> tuple[type, type] | None:
-    """Extract T and wrapper class from Factory[T] annotations.
+    """Extract T and wrapper class from Factory[T] or Lazy[T] annotations.
 
     Returns (inner_type, wrapper_class) or None if not a wrapper type.
     """
     origin = get_origin(annotation)
-    if origin is Factory:
+    if origin is Factory or origin is Lazy:
         args = get_args(annotation)
         if args:
             return args[0], origin
@@ -269,6 +277,7 @@ class Binding:
             self._factory_has_params = len(sig.parameters) > 0
 
         self._strategy = self._create_strategy(scope)
+        self._lazy_strategy = self._create_strategy(scope)
 
     def _create_strategy(self, scope: Scopes) -> BindingStrategy:
         """Create the appropriate binding strategy for the scope."""
@@ -281,6 +290,19 @@ class Binding:
                 return RequestStrategy()
             case _:
                 raise RegistrationError(f"Unknown scope: {scope}")
+
+    def create_lazy_wrapper(
+        self, container: "Container", dep_type: type, dep_name: str | None
+    ) -> "Lazy[Any]":
+        """Create a Lazy wrapper cached through this binding's scope strategy."""
+
+        def wrapper_factory() -> Lazy[Any]:
+            def resolver(_t: type = dep_type, _n: str | None = dep_name) -> Any:
+                return container.get(_t, name=_n)
+
+            return Lazy(resolver)
+
+        return self._lazy_strategy.get(wrapper_factory, is_async_factory=False)  # type: ignore[no-any-return]
 
     def create_instance(self, container: "Container") -> Any:
         """Create an instance of the dependency (sync context)."""
@@ -660,6 +682,23 @@ class Container:
             return instance
         finally:
             self._resolution_stack.pop()
+
+    def _find_binding(self, key: DependencyKey) -> Binding | None:
+        """Find a single binding for a key, searching locally and in parent."""
+        bindings = self._bindings.get(key, [])
+        if len(bindings) == 1:
+            return bindings[0]
+
+        for module in self._modules:
+            if isinstance(module, Container):
+                binding = module._find_binding(key)
+                if binding is not None:
+                    return binding
+
+        if self._parent is not None:
+            return self._parent._find_binding(key)
+
+        return None
 
     def has(self, interface: type[Any], name: str | None = None) -> bool:
         """Check if a dependency is registered."""

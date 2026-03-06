@@ -21,6 +21,26 @@ class Factory[T]:
         return self._resolver()
 
 
+class Lazy[T]:
+    """Callable wrapper injected by the container.
+
+    First call resolves T from the container. Subsequent calls return the cached instance.
+    """
+
+    __slots__ = ("_resolver", "_value", "_resolved")
+
+    def __init__(self, resolver: Callable[[], T]) -> None:
+        self._resolver = resolver
+        self._value: T | None = None
+        self._resolved = False
+
+    def __call__(self) -> T:
+        if not self._resolved:
+            self._value = self._resolver()
+            self._resolved = True
+        return self._value  # type: ignore[return-value]
+
+
 class Named:
     """Qualifier for named dependency injection.
 
