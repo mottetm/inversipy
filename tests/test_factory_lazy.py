@@ -1,4 +1,4 @@
-"""Tests for Factory[T] injectable wrapper type."""
+"""Tests for Factory[T] and Lazy[T] injectable wrapper types."""
 
 import asyncio
 from abc import ABC, abstractmethod
@@ -11,6 +11,7 @@ from inversipy import (
     Factory,
     Inject,
     Injectable,
+    Lazy,
     Named,
     ResolutionError,
     Scopes,
@@ -39,6 +40,11 @@ class SimpleService:
 class DependentService:
     def __init__(self, factory: Factory[SimpleService]) -> None:
         self.factory = factory
+
+
+class DependentWithLazy:
+    def __init__(self, lazy: Lazy[SimpleService]) -> None:
+        self.lazy = lazy
 
 
 class TestFactory:
@@ -138,3 +144,122 @@ class TestFactory:
         # Factory is injected but SimpleService is not registered
         with pytest.raises((DependencyNotFoundError, ResolutionError)):
             dep.factory()
+
+
+class TestLazy:
+    def test_basic_caching(self) -> None:
+        container = Container()
+        container.register(SimpleService)
+        container.register(DependentWithLazy)
+
+        dep = container.get(DependentWithLazy)
+        instance1 = dep.lazy()
+        instance2 = dep.lazy()
+
+        assert isinstance(instance1, SimpleService)
+        assert instance1 is instance2
+
+    def test_named_via_inject(self) -> None:
+        class Consumer:
+            def __init__(
+                self, la: Inject[Lazy[IService], Named("a")]  # type: ignore[type-arg]
+            ) -> None:
+                self.la = la
+
+        container = Container()
+        container.register(IService, ServiceA, name="a")
+        container.register(Consumer)
+
+        consumer = container.get(Consumer)
+        svc = consumer.la()
+        assert isinstance(svc, ServiceA)
+        # Verify caching
+        assert consumer.la() is svc
+
+    def test_via_container_run(self) -> None:
+        container = Container()
+        container.register(SimpleService)
+
+        def func(lazy: Lazy[SimpleService]) -> SimpleService:
+            return lazy()
+
+        result = container.run(func)
+        assert isinstance(result, SimpleService)
+
+    def test_via_injectable(self) -> None:
+        class MyInjectable(Injectable):
+            lazy: Inject[Lazy[SimpleService]]  # type: ignore[type-arg]
+
+        container = Container()
+        container.register(SimpleService)
+        container.register(MyInjectable)
+
+        obj = container.get(MyInjectable)
+        instance = obj.lazy()
+        assert isinstance(instance, SimpleService)
+        assert obj.lazy() is instance
+
+    def test_async_resolution(self) -> None:
+        container = Container()
+        container.register(SimpleService)
+        container.register(DependentWithLazy)
+
+        async def run() -> DependentWithLazy:
+            return await container.get_async(DependentWithLazy)
+
+        dep = asyncio.run(run())
+        instance1 = dep.lazy()
+        instance2 = dep.lazy()
+        assert instance1 is instance2
+
+    def test_singleton_scope(self) -> None:
+        container = Container()
+        container.register(SimpleService, scope=Scopes.SINGLETON)
+        container.register(DependentWithLazy)
+
+        dep = container.get(DependentWithLazy)
+        instance1 = dep.lazy()
+        instance2 = dep.lazy()
+
+        assert instance1 is instance2
+
+    def test_request_scope_isolates_across_tasks(self) -> None:
+        container = Container()
+        container.register(SimpleService, scope=Scopes.REQUEST)
+        container.register(DependentWithLazy)
+
+        async def task() -> SimpleService:
+            dep = await container.get_async(DependentWithLazy)
+            # Within same task, Lazy should cache
+            instance1 = dep.lazy()
+            instance2 = dep.lazy()
+            assert instance1 is instance2
+            return instance1
+
+        async def run() -> tuple[SimpleService, SimpleService]:
+            return await asyncio.gather(task(), task())
+
+        svc1, svc2 = asyncio.run(run())
+        # Across different tasks (request contexts), should get different instances
+        assert svc1 is not svc2
+
+    def test_request_scope_caches_within_task(self) -> None:
+        container = Container()
+        container.register(SimpleService, scope=Scopes.REQUEST)
+        container.register(DependentWithLazy)
+
+        async def run() -> None:
+            dep = await container.get_async(DependentWithLazy)
+            instance1 = dep.lazy()
+            instance2 = dep.lazy()
+            assert instance1 is instance2
+
+        asyncio.run(run())
+
+    def test_error_deferred_to_call_time(self) -> None:
+        container = Container()
+        container.register(DependentWithLazy)
+
+        dep = container.get(DependentWithLazy)
+        with pytest.raises((DependencyNotFoundError, ResolutionError)):
+            dep.lazy()

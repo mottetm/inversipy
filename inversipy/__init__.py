@@ -32,7 +32,7 @@ from .exceptions import (
 )
 from .module import Module, ModuleBuilder
 from .scopes import Scopes
-from .types import Factory, Named
+from .types import Factory, Lazy, Named
 
 try:
     __version__ = version("inversipy")
@@ -48,6 +48,7 @@ __all__ = [
     "Scopes",
     # Types
     "Factory",
+    "Lazy",
     "Named",
     # Dependency injection utilities
     "Inject",
