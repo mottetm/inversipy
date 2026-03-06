@@ -613,12 +613,12 @@ class TestBindingErrorPaths:
             Binding(key=SimpleService, factory=None, implementation=None, instance=None)
 
     def test_binding_unknown_scope_raises(self) -> None:
-        """Binding with an unknown scope raises RegistrationError."""
-        from inversipy import RegistrationError
+        """Binding with an unknown scope raises InvalidScopeError."""
+        from inversipy import InvalidScopeError
         from inversipy.container import Binding
 
         # Create a fake scope value
-        with pytest.raises(RegistrationError, match="Unknown scope"):
+        with pytest.raises(InvalidScopeError, match="Unknown scope"):
             Binding(key=SimpleService, implementation=SimpleService, scope="invalid")  # type: ignore[arg-type]
 
     def test_factory_with_inject_all_param(self) -> None:

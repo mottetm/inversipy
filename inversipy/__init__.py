@@ -14,6 +14,7 @@ Inversipy provides a flexible dependency injection container with support for:
 
 from importlib.metadata import PackageNotFoundError, version
 
+from .binding_strategies import BindingStrategy
 from .container import Container
 from .decorators import (
     Inject,
@@ -31,7 +32,7 @@ from .exceptions import (
     ValidationError,
 )
 from .module import Module, ModuleBuilder
-from .scopes import Scopes
+from .scopes import CustomScope, Scope, Scopes
 from .types import Factory, Lazy, Named
 
 try:
@@ -46,6 +47,10 @@ __all__ = [
     "ModuleBuilder",
     # Scopes
     "Scopes",
+    "CustomScope",
+    "Scope",
+    # Extension points
+    "BindingStrategy",
     # Types
     "Factory",
     "Lazy",

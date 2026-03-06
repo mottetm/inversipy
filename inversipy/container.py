@@ -20,11 +20,12 @@ from .exceptions import (
     AmbiguousDependencyError,
     CircularDependencyError,
     DependencyNotFoundError,
+    InvalidScopeError,
     RegistrationError,
     ResolutionError,
     ValidationError,
 )
-from .scopes import Scopes
+from .scopes import CustomScope, Scope, Scopes
 from .types import (
     DependencyKey,
     Factory,
@@ -255,7 +256,7 @@ class Binding:
         key: DependencyKey,
         factory: FactoryCallable[Any] | None = None,
         implementation: type[Any] | None = None,
-        scope: Scopes = Scopes.TRANSIENT,
+        scope: Scope = Scopes.TRANSIENT,
         instance: Any | None = None,
     ) -> None:
         """Initialize a binding."""
@@ -279,8 +280,10 @@ class Binding:
         self._strategy = self._create_strategy(scope)
         self._lazy_strategy = self._create_strategy(scope)
 
-    def _create_strategy(self, scope: Scopes) -> BindingStrategy:
+    def _create_strategy(self, scope: Scope) -> BindingStrategy:
         """Create the appropriate binding strategy for the scope."""
+        if isinstance(scope, CustomScope):
+            return scope.strategy_class()
         match scope:
             case Scopes.SINGLETON:
                 return SingletonStrategy()
@@ -289,7 +292,7 @@ class Binding:
             case Scopes.REQUEST:
                 return RequestStrategy()
             case _:
-                raise RegistrationError(f"Unknown scope: {scope}")
+                raise InvalidScopeError(f"Unknown scope: '{scope}'", scope_name=str(scope))
 
     def create_lazy_wrapper(
         self, container: "Container", dep_type: type, dep_name: str | None
@@ -525,7 +528,7 @@ class Container:
         interface: type[T],
         implementation: type[T] | None = None,
         factory: FactoryCallable[T] | None = None,
-        scope: Scopes = Scopes.TRANSIENT,
+        scope: Scope = Scopes.TRANSIENT,
         instance: T | None = None,
         name: str | None = None,
     ) -> "Container":
@@ -553,7 +556,7 @@ class Container:
         self,
         interface: type[T],
         factory: FactoryCallable[T],
-        scope: Scopes = Scopes.TRANSIENT,
+        scope: Scope = Scopes.TRANSIENT,
         name: str | None = None,
     ) -> "Container":
         """Register a factory function for a dependency."""
