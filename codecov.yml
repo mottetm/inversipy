@@ -1,0 +1,3 @@
+comment:
+  layout: "header, diff, flags, components, tree, footer"
+  behavior: new
