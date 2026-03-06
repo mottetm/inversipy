@@ -53,9 +53,11 @@ class ValidationError(InversipyError):
 
 
 class InvalidScopeError(InversipyError):
-    """Raised when an invalid scope is used."""
+    """Raised when an invalid or unregistered scope is used."""
 
-    pass
+    def __init__(self, message: str, scope_name: str | None = None) -> None:
+        self.scope_name = scope_name
+        super().__init__(message)
 
 
 class RegistrationError(InversipyError):
