@@ -280,7 +280,7 @@ class TestFactoryDependencyInjection:
         with pytest.raises(ResolutionError) as exc_info:
             container.get(DependentService)
 
-        assert "Cannot resolve factory parameter 'simple'" in str(exc_info.value)
+        assert "Cannot resolve parameter 'simple'" in str(exc_info.value)
 
     def test_factory_without_type_hint_raises_error(self) -> None:
         """Test that factory parameter without type hint raises error."""
