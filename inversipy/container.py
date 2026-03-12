@@ -96,6 +96,83 @@ def _make_wrapper(
     return Lazy(resolver)
 
 
+def _make_wrapper_async(
+    wrapper_type: type, dep_type: type, dep_name: str | None, container: "Container"
+) -> Factory | Lazy:  # type: ignore[type-arg]
+    """Create a Factory or Lazy wrapper with async resolution support."""
+
+    def sync_resolver(_t: type = dep_type, _n: str | None = dep_name) -> Any:
+        return container.get(_t, name=_n)
+
+    async def async_resolver(_t: type = dep_type, _n: str | None = dep_name) -> Any:
+        return await container.get_async(_t, name=_n)
+
+    if wrapper_type is Factory:
+        return Factory(sync_resolver, async_resolver)
+
+    key = make_key(dep_type, dep_name)
+    binding = container._find_binding(key)
+    if binding is not None:
+        return binding.create_lazy_wrapper_async(container, dep_type, dep_name)
+    return Lazy(sync_resolver, async_resolver)
+
+
+def _injectable_to_param_deps(cls: type[Any]) -> tuple[ParameterDependency, ...] | None:
+    """Convert Injectable field metadata into ParameterDependency tuples.
+
+    Returns None if the class has no Injectable fields.
+    """
+    inject_fields: dict[str, tuple[type, str | None]] | None = getattr(cls, "_inject_fields", None)
+    inject_all_fields: dict[str, tuple[type, str | None]] | None = getattr(
+        cls, "_inject_all_fields", None
+    )
+
+    if not inject_fields and not inject_all_fields:
+        return None
+
+    deps: list[ParameterDependency] = []
+
+    if inject_fields:
+        for field_name, (field_type, dep_name) in inject_fields.items():
+            wrapper = _extract_wrapper_type(field_type)
+            if wrapper is not None:
+                inner_type, wrapper_cls = wrapper
+                deps.append(
+                    ParameterDependency(
+                        name=field_name,
+                        dep_type=inner_type,
+                        dep_name=dep_name,
+                        is_collection=False,
+                        has_default=False,
+                        wrapper_type=wrapper_cls,
+                    )
+                )
+            else:
+                deps.append(
+                    ParameterDependency(
+                        name=field_name,
+                        dep_type=field_type,
+                        dep_name=dep_name,
+                        is_collection=False,
+                        has_default=False,
+                    )
+                )
+
+    if inject_all_fields:
+        for field_name, (item_type, coll_name) in inject_all_fields.items():
+            deps.append(
+                ParameterDependency(
+                    name=field_name,
+                    dep_type=item_type,
+                    dep_name=coll_name,
+                    is_collection=True,
+                    has_default=False,
+                )
+            )
+
+    return tuple(deps)
+
+
 def _extract_wrapper_type(annotation: Any) -> tuple[type, type] | None:
     """Extract T and wrapper class from Factory[T] or Lazy[T] annotations.
 
@@ -307,6 +384,22 @@ class Binding:
 
         return self._lazy_strategy.get(wrapper_factory, is_async_factory=False)  # type: ignore[no-any-return]
 
+    def create_lazy_wrapper_async(
+        self, container: "Container", dep_type: type, dep_name: str | None
+    ) -> "Lazy[Any]":
+        """Create a Lazy wrapper with async support, cached via scope strategy."""
+
+        def wrapper_factory() -> Lazy[Any]:
+            def resolver(_t: type = dep_type, _n: str | None = dep_name) -> Any:
+                return container.get(_t, name=_n)
+
+            async def async_resolver(_t: type = dep_type, _n: str | None = dep_name) -> Any:
+                return await container.get_async(_t, name=_n)
+
+            return Lazy(resolver, async_resolver)
+
+        return self._lazy_strategy.get(wrapper_factory, is_async_factory=False)  # type: ignore[no-any-return]
+
     def create_instance(self, container: "Container") -> Any:
         """Create an instance of the dependency (sync context)."""
         if self.instance is not None:
@@ -336,36 +429,7 @@ class Binding:
         """Call a factory function, resolving its dependencies from the container."""
         try:
             deps = analyze_parameters(factory)
-            kwargs: dict[str, Any] = {}
-
-            for dep in deps:
-                if dep.dep_type is _MissingType:
-                    raise ResolutionError(
-                        f"Factory parameter '{dep.name}' has no type hint "
-                        f"and no default value for {self.key}"
-                    )
-
-                if dep.wrapper_type is not None:
-                    kwargs[dep.name] = _make_wrapper(
-                        dep.wrapper_type, dep.dep_type, dep.dep_name, container
-                    )
-                    continue
-
-                try:
-                    if dep.is_collection:
-                        kwargs[dep.name] = container.get_all(dep.dep_type, name=dep.dep_name)
-                    else:
-                        kwargs[dep.name] = container.get(dep.dep_type, name=dep.dep_name)
-                except DependencyNotFoundError:
-                    if dep.is_optional:
-                        kwargs[dep.name] = None
-                    elif not dep.has_default:
-                        raise ResolutionError(
-                            f"Cannot resolve factory parameter '{dep.name}' "
-                            f"of type {_format_dependency(dep.dep_type, dep.dep_name)} "
-                            f"for {self.key}"
-                        )
-
+            kwargs = container._resolve_deps(deps, f"factory for {self.key}")
             return factory(**kwargs)
         except Exception as e:
             if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
@@ -403,40 +467,7 @@ class Binding:
         """Call a factory function asynchronously, resolving dependencies."""
         try:
             deps = analyze_parameters(factory)
-            kwargs: dict[str, Any] = {}
-
-            for dep in deps:
-                if dep.dep_type is _MissingType:
-                    raise ResolutionError(
-                        f"Factory parameter '{dep.name}' has no type hint "
-                        f"and no default value for {self.key}"
-                    )
-
-                if dep.wrapper_type is not None:
-                    kwargs[dep.name] = _make_wrapper(
-                        dep.wrapper_type, dep.dep_type, dep.dep_name, container
-                    )
-                    continue
-
-                try:
-                    if dep.is_collection:
-                        kwargs[dep.name] = await container.get_all_async(
-                            dep.dep_type, name=dep.dep_name
-                        )
-                    else:
-                        kwargs[dep.name] = await container.get_async(
-                            dep.dep_type, name=dep.dep_name
-                        )
-                except DependencyNotFoundError:
-                    if dep.is_optional:
-                        kwargs[dep.name] = None
-                    elif not dep.has_default:
-                        raise ResolutionError(
-                            f"Cannot resolve factory parameter '{dep.name}' "
-                            f"of type {_format_dependency(dep.dep_type, dep.dep_name)} "
-                            f"for {self.key}"
-                        )
-
+            kwargs = await container._resolve_deps_async(deps, f"factory for {self.key}")
             result = factory(**kwargs)
             if asyncio.iscoroutine(result):
                 return await result
@@ -579,8 +610,9 @@ class Container:
         key = make_key(interface, name)
 
         if key in self._resolution_stack:
-            self._resolution_stack.append(key)
-            cycle_types = [get_type_from_key(k) for k in self._resolution_stack]
+            cycle_types = [get_type_from_key(k) for k in self._resolution_stack] + [
+                get_type_from_key(key)
+            ]
             raise CircularDependencyError(cycle_types)
 
         bindings = self._bindings.get(key, [])
@@ -652,8 +684,9 @@ class Container:
         key = make_key(interface, name)
 
         if key in self._resolution_stack:
-            self._resolution_stack.append(key)
-            cycle_types = [get_type_from_key(k) for k in self._resolution_stack]
+            cycle_types = [get_type_from_key(k) for k in self._resolution_stack] + [
+                get_type_from_key(key)
+            ]
             raise CircularDependencyError(cycle_types)
 
         bindings = self._bindings.get(key, [])
@@ -778,45 +811,85 @@ class Container:
 
         return instances
 
+    def _resolve_deps(
+        self,
+        deps: tuple[ParameterDependency, ...],
+        target_name: str,
+        provided: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Resolve a list of parameter dependencies synchronously."""
+        kwargs = dict(provided) if provided else {}
+        for dep in deps:
+            if dep.name in kwargs:
+                continue
+            if dep.dep_type is _MissingType:
+                raise ResolutionError(
+                    f"Parameter '{dep.name}' of {target_name} "
+                    f"has no type hint and no default value"
+                )
+            if dep.wrapper_type is not None:
+                kwargs[dep.name] = _make_wrapper(dep.wrapper_type, dep.dep_type, dep.dep_name, self)
+                continue
+            try:
+                if dep.is_collection:
+                    kwargs[dep.name] = self.get_all(dep.dep_type, name=dep.dep_name)
+                else:
+                    kwargs[dep.name] = self.get(dep.dep_type, name=dep.dep_name)
+            except DependencyNotFoundError:
+                if dep.is_optional:
+                    kwargs[dep.name] = None
+                elif not dep.has_default:
+                    raise ResolutionError(
+                        f"Cannot resolve parameter '{dep.name}' of type "
+                        f"{_format_dependency(dep.dep_type, dep.dep_name)} "
+                        f"for {target_name}"
+                    )
+        return kwargs
+
+    async def _resolve_deps_async(
+        self,
+        deps: tuple[ParameterDependency, ...],
+        target_name: str,
+        provided: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Resolve a list of parameter dependencies asynchronously."""
+        kwargs = dict(provided) if provided else {}
+        for dep in deps:
+            if dep.name in kwargs:
+                continue
+            if dep.dep_type is _MissingType:
+                raise ResolutionError(
+                    f"Parameter '{dep.name}' of {target_name} "
+                    f"has no type hint and no default value"
+                )
+            if dep.wrapper_type is not None:
+                kwargs[dep.name] = _make_wrapper_async(
+                    dep.wrapper_type, dep.dep_type, dep.dep_name, self
+                )
+                continue
+            try:
+                if dep.is_collection:
+                    kwargs[dep.name] = await self.get_all_async(dep.dep_type, name=dep.dep_name)
+                else:
+                    kwargs[dep.name] = await self.get_async(dep.dep_type, name=dep.dep_name)
+            except DependencyNotFoundError:
+                if dep.is_optional:
+                    kwargs[dep.name] = None
+                elif not dep.has_default:
+                    raise ResolutionError(
+                        f"Cannot resolve parameter '{dep.name}' of type "
+                        f"{_format_dependency(dep.dep_type, dep.dep_name)} "
+                        f"for {target_name}"
+                    )
+        return kwargs
+
     def run[T](self, func: Callable[..., T], **provided_kwargs: Any) -> T:
         """Run a function with dependency injection using synchronous resolution."""
         try:
             deps = analyze_parameters(func)
-            resolved_kwargs = provided_kwargs.copy()
-
-            for dep in deps:
-                if dep.name in provided_kwargs:
-                    continue
-
-                if dep.dep_type is _MissingType:
-                    raise ResolutionError(
-                        f"Parameter '{dep.name}' of function '{func.__name__}' "
-                        f"has no type annotation and no default value"
-                    )
-
-                if dep.wrapper_type is not None:
-                    resolved_kwargs[dep.name] = _make_wrapper(
-                        dep.wrapper_type, dep.dep_type, dep.dep_name, self
-                    )
-                    continue
-
-                try:
-                    if dep.is_collection:
-                        resolved_kwargs[dep.name] = self.get_all(dep.dep_type, name=dep.dep_name)
-                    else:
-                        resolved_kwargs[dep.name] = self.get(dep.dep_type, name=dep.dep_name)
-                except DependencyNotFoundError:
-                    if dep.is_optional:
-                        resolved_kwargs[dep.name] = None
-                    elif not dep.has_default:
-                        raise ResolutionError(
-                            f"Cannot resolve parameter '{dep.name}' of type "
-                            f"{_format_dependency(dep.dep_type, dep.dep_name)} "
-                            f"for function '{func.__name__}'"
-                        )
-
+            target = f"function '{func.__name__}'"
+            resolved_kwargs = self._resolve_deps(deps, target, provided=provided_kwargs)
             return func(**resolved_kwargs)
-
         except Exception as e:
             resolution_errors = (
                 ResolutionError,
@@ -832,45 +905,9 @@ class Container:
         """Run a function with dependency injection using asynchronous resolution."""
         try:
             deps = analyze_parameters(func)
-            resolved_kwargs = provided_kwargs.copy()
-
-            for dep in deps:
-                if dep.name in provided_kwargs:
-                    continue
-
-                if dep.dep_type is _MissingType:
-                    raise ResolutionError(
-                        f"Parameter '{dep.name}' of function '{func.__name__}' "
-                        f"has no type annotation and no default value"
-                    )
-
-                if dep.wrapper_type is not None:
-                    resolved_kwargs[dep.name] = _make_wrapper(
-                        dep.wrapper_type, dep.dep_type, dep.dep_name, self
-                    )
-                    continue
-
-                try:
-                    if dep.is_collection:
-                        resolved_kwargs[dep.name] = await self.get_all_async(
-                            dep.dep_type, name=dep.dep_name
-                        )
-                    else:
-                        resolved_kwargs[dep.name] = await self.get_async(
-                            dep.dep_type, name=dep.dep_name
-                        )
-                except DependencyNotFoundError:
-                    if dep.is_optional:
-                        resolved_kwargs[dep.name] = None
-                    elif not dep.has_default:
-                        raise ResolutionError(
-                            f"Cannot resolve parameter '{dep.name}' of type "
-                            f"{_format_dependency(dep.dep_type, dep.dep_name)} "
-                            f"for function '{func.__name__}'"
-                        )
-
+            target = f"function '{func.__name__}'"
+            resolved_kwargs = await self._resolve_deps_async(deps, target, provided=provided_kwargs)
             return func(**resolved_kwargs)
-
         except Exception as e:
             resolution_errors = (
                 ResolutionError,
@@ -889,121 +926,34 @@ class Container:
 
         Returns (inject_kwargs, inject_all_kwargs) or None if not Injectable.
         """
-        inject_fields: dict[str, tuple[type, str | None]] | None = getattr(
-            cls, "_inject_fields", None
-        )
-        inject_all_fields: dict[str, tuple[type, str | None]] | None = getattr(
-            cls, "_inject_all_fields", None
-        )
-
-        if not inject_fields and not inject_all_fields:
+        deps = _injectable_to_param_deps(cls)
+        if deps is None:
             return None
-
-        kwargs: dict[str, Any] = {}
-
-        if inject_fields:
-            for field_name, (field_type, dep_name) in inject_fields.items():
-                wrapper = _extract_wrapper_type(field_type)
-                if wrapper is not None:
-                    inner_type, wrapper_cls = wrapper
-                    kwargs[field_name] = _make_wrapper(wrapper_cls, inner_type, dep_name, self)
-                else:
-                    try:
-                        kwargs[field_name] = self.get(field_type, name=dep_name)
-                    except DependencyNotFoundError:
-                        raise ResolutionError(
-                            f"Cannot resolve dependency '{field_name}' of type "
-                            f"{_format_dependency(field_type, dep_name)} "
-                            f"for class '{cls.__name__}'"
-                        )
-
-        if inject_all_fields:
-            for field_name, (item_type, coll_name) in inject_all_fields.items():
-                kwargs[field_name] = self.get_all(item_type, name=coll_name)
-
-        return kwargs, {}
+        target = f"class '{cls.__name__}'"
+        return self._resolve_deps(deps, target), {}
 
     async def _resolve_injectable_deps_async(
         self, cls: type[Any]
     ) -> tuple[dict[str, Any], dict[str, Any]] | None:
         """Resolve dependencies for Injectable classes asynchronously."""
-        inject_fields: dict[str, tuple[type, str | None]] | None = getattr(
-            cls, "_inject_fields", None
-        )
-        inject_all_fields: dict[str, tuple[type, str | None]] | None = getattr(
-            cls, "_inject_all_fields", None
-        )
-
-        if not inject_fields and not inject_all_fields:
+        deps = _injectable_to_param_deps(cls)
+        if deps is None:
             return None
-
-        kwargs: dict[str, Any] = {}
-
-        if inject_fields:
-            for field_name, (field_type, dep_name) in inject_fields.items():
-                wrapper = _extract_wrapper_type(field_type)
-                if wrapper is not None:
-                    inner_type, wrapper_cls = wrapper
-                    kwargs[field_name] = _make_wrapper(wrapper_cls, inner_type, dep_name, self)
-                else:
-                    try:
-                        kwargs[field_name] = await self.get_async(field_type, name=dep_name)
-                    except DependencyNotFoundError:
-                        raise ResolutionError(
-                            f"Cannot resolve dependency '{field_name}' of type "
-                            f"{_format_dependency(field_type, dep_name)} "
-                            f"for class '{cls.__name__}'"
-                        )
-
-        if inject_all_fields:
-            for field_name, (item_type, coll_name) in inject_all_fields.items():
-                kwargs[field_name] = await self.get_all_async(item_type, name=coll_name)
-
-        return kwargs, {}
+        target = f"class '{cls.__name__}'"
+        return await self._resolve_deps_async(deps, target), {}
 
     def _create_instance[T](self, cls: type[T]) -> T:
         """Create an instance of a class, resolving its dependencies."""
         try:
-            # Check if this is an Injectable class
             injectable_result = self._resolve_injectable_deps(cls)
             if injectable_result is not None:
                 injectable_kwargs, _ = injectable_result
                 return cls(**injectable_kwargs)
 
-            # Regular class - use constructor inspection
             deps = analyze_parameters(cls.__init__, skip_self=True)
-            kwargs: dict[str, Any] = {}
-
-            for dep in deps:
-                if dep.dep_type is _MissingType:
-                    raise ResolutionError(
-                        f"Parameter '{dep.name}' of class '{cls.__name__}' "
-                        f"has no type annotation and no default value"
-                    )
-
-                if dep.wrapper_type is not None:
-                    kwargs[dep.name] = _make_wrapper(
-                        dep.wrapper_type, dep.dep_type, dep.dep_name, self
-                    )
-                    continue
-
-                try:
-                    if dep.is_collection:
-                        kwargs[dep.name] = self.get_all(dep.dep_type, name=dep.dep_name)
-                    else:
-                        kwargs[dep.name] = self.get(dep.dep_type, name=dep.dep_name)
-                except DependencyNotFoundError:
-                    if dep.is_optional:
-                        kwargs[dep.name] = None
-                    elif not dep.has_default:
-                        raise ResolutionError(
-                            f"Cannot resolve parameter '{dep.name}' of type "
-                            f"{_format_dependency(dep.dep_type, dep.dep_name)} "
-                            f"for class '{cls.__name__}'"
-                        )
-
+            target = f"class '{cls.__name__}'"
+            kwargs = self._resolve_deps(deps, target)
             return cls(**kwargs)
-
         except Exception as e:
             if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
                 raise
@@ -1012,46 +962,15 @@ class Container:
     async def _create_instance_async[T](self, cls: type[T]) -> T:
         """Create an instance of a class asynchronously, resolving its dependencies."""
         try:
-            # Check if this is an Injectable class
             injectable_result = await self._resolve_injectable_deps_async(cls)
             if injectable_result is not None:
                 injectable_kwargs, _ = injectable_result
                 return cls(**injectable_kwargs)
 
-            # Regular class - use constructor inspection
             deps = analyze_parameters(cls.__init__, skip_self=True)
-            kwargs: dict[str, Any] = {}
-
-            for dep in deps:
-                if dep.dep_type is _MissingType:
-                    raise ResolutionError(
-                        f"Parameter '{dep.name}' of class '{cls.__name__}' "
-                        f"has no type annotation and no default value"
-                    )
-
-                if dep.wrapper_type is not None:
-                    kwargs[dep.name] = _make_wrapper(
-                        dep.wrapper_type, dep.dep_type, dep.dep_name, self
-                    )
-                    continue
-
-                try:
-                    if dep.is_collection:
-                        kwargs[dep.name] = await self.get_all_async(dep.dep_type, name=dep.dep_name)
-                    else:
-                        kwargs[dep.name] = await self.get_async(dep.dep_type, name=dep.dep_name)
-                except DependencyNotFoundError:
-                    if dep.is_optional:
-                        kwargs[dep.name] = None
-                    elif not dep.has_default:
-                        raise ResolutionError(
-                            f"Cannot resolve parameter '{dep.name}' of type "
-                            f"{_format_dependency(dep.dep_type, dep.dep_name)} "
-                            f"for class '{cls.__name__}'"
-                        )
-
+            target = f"class '{cls.__name__}'"
+            kwargs = await self._resolve_deps_async(deps, target)
             return cls(**kwargs)
-
         except Exception as e:
             if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
                 raise
