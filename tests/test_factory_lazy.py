@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 import pytest
 
 from inversipy import (
+    CircularDependencyError,
     Container,
     DependencyNotFoundError,
     Factory,
@@ -263,3 +264,208 @@ class TestLazy:
         dep = container.get(DependentWithLazy)
         with pytest.raises((DependencyNotFoundError, ResolutionError)):
             dep.lazy()
+
+
+class TestFactoryAcall:
+    def test_acall_uses_async_resolver(self) -> None:
+        """Test that Factory.acall() uses the async resolver when provided."""
+        container = Container()
+        container.register(SimpleService)
+        container.register(DependentService)
+
+        async def run() -> SimpleService:
+            dep = await container.get_async(DependentService)
+            return await dep.factory.acall()
+
+        instance = asyncio.run(run())
+        assert isinstance(instance, SimpleService)
+
+    def test_acall_falls_back_to_sync(self) -> None:
+        """Test that Factory.acall() falls back to sync resolver when no async resolver."""
+        container = Container()
+        container.register(SimpleService)
+        container.register(DependentService)
+
+        # Sync resolution produces Factory without async_resolver
+        dep = container.get(DependentService)
+
+        async def run() -> SimpleService:
+            return await dep.factory.acall()
+
+        instance = asyncio.run(run())
+        assert isinstance(instance, SimpleService)
+
+    def test_acall_resolves_fresh_each_time(self) -> None:
+        """Test that Factory.acall() resolves a new instance each call (transient)."""
+        container = Container()
+        container.register(SimpleService)
+        container.register(DependentService)
+
+        async def run() -> tuple[SimpleService, SimpleService]:
+            dep = await container.get_async(DependentService)
+            a = await dep.factory.acall()
+            b = await dep.factory.acall()
+            return a, b
+
+        a, b = asyncio.run(run())
+        assert isinstance(a, SimpleService)
+        assert a is not b
+
+
+class TestLazyAcall:
+    def test_acall_uses_async_resolver(self) -> None:
+        """Test that Lazy.acall() uses the async resolver when provided."""
+        container = Container()
+        container.register(SimpleService)
+        container.register(DependentWithLazy)
+
+        async def run() -> SimpleService:
+            dep = await container.get_async(DependentWithLazy)
+            return await dep.lazy.acall()
+
+        instance = asyncio.run(run())
+        assert isinstance(instance, SimpleService)
+
+    def test_acall_caches_result(self) -> None:
+        """Test that Lazy.acall() caches the resolved instance."""
+        container = Container()
+        container.register(SimpleService)
+        container.register(DependentWithLazy)
+
+        async def run() -> tuple[SimpleService, SimpleService]:
+            dep = await container.get_async(DependentWithLazy)
+            a = await dep.lazy.acall()
+            b = await dep.lazy.acall()
+            return a, b
+
+        a, b = asyncio.run(run())
+        assert a is b
+
+    def test_acall_falls_back_to_sync(self) -> None:
+        """Test that Lazy.acall() falls back to sync resolver when no async resolver."""
+        container = Container()
+        container.register(SimpleService)
+        container.register(DependentWithLazy)
+
+        # Sync resolution produces Lazy without async_resolver
+        dep = container.get(DependentWithLazy)
+
+        async def run() -> SimpleService:
+            return await dep.lazy.acall()
+
+        instance = asyncio.run(run())
+        assert isinstance(instance, SimpleService)
+
+
+class TestAsyncResolutionEdgeCases:
+    def test_run_async_skips_provided_kwargs(self) -> None:
+        """Test that _resolve_deps_async skips already-provided kwargs."""
+        container = Container()
+        container.register(SimpleService)
+
+        def func(svc: SimpleService) -> SimpleService:
+            return svc
+
+        provided = SimpleService()
+
+        async def run() -> SimpleService:
+            return await container.run_async(func, svc=provided)
+
+        result = asyncio.run(run())
+        assert result is provided
+
+    def test_run_async_missing_type_hint_raises(self) -> None:
+        """Test that _resolve_deps_async raises on missing type hint."""
+        container = Container()
+
+        def func(param) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        async def run() -> None:
+            await container.run_async(func)
+
+        with pytest.raises(ResolutionError, match="has no type hint"):
+            asyncio.run(run())
+
+    def test_run_async_missing_required_dep_raises(self) -> None:
+        """Test that _resolve_deps_async raises on missing required dependency."""
+        container = Container()
+
+        def func(svc: SimpleService) -> None:
+            pass
+
+        async def run() -> None:
+            await container.run_async(func)
+
+        with pytest.raises(ResolutionError, match="Cannot resolve parameter"):
+            asyncio.run(run())
+
+    def test_async_lazy_without_binding_gets_async_resolver(self) -> None:
+        """Test _make_wrapper_async Lazy fallback when no binding exists."""
+        container = Container()
+        # Register IService with multiple implementations so _find_binding
+        # returns None (it only returns for single bindings)
+        container.register(IService, ServiceA, name="a")
+        container.register(IService, ServiceB, name="b")
+
+        class Holder:
+            def __init__(self, lazy: Lazy[IService]) -> None:
+                self.lazy = lazy
+
+        # Use a factory that takes Lazy[IService] (unnamed) — no single binding
+        # exists, so _make_wrapper_async hits the fallback path
+        def create_holder(lazy: Lazy[IService]) -> Holder:
+            return Holder(lazy)
+
+        container.register_factory(Holder, create_holder)
+
+        async def run() -> Holder:
+            return await container.get_async(Holder)
+
+        # The Lazy is created but calling it will fail since IService
+        # (unnamed) has no single binding. We just need to verify the
+        # wrapper was created with async support.
+        holder = asyncio.run(run())
+        assert holder.lazy._async_resolver is not None
+
+
+class _CircA:
+    def __init__(self, b: "_CircB") -> None:
+        self.b = b
+
+
+class _CircB:
+    def __init__(self, a: _CircA) -> None:
+        self.a = a
+
+
+class TestCircularDependencyStackCleanup:
+    def test_stack_not_leaked_on_circular_dependency(self) -> None:
+        """Test that the resolution stack is not corrupted by circular dependency detection."""
+        container = Container()
+        container.register(_CircA)
+        container.register(_CircB)
+
+        with pytest.raises(CircularDependencyError):
+            container.get(_CircA)
+
+        # After the error, the resolution stack should be clean
+        container.register(SimpleService)
+        instance = container.get(SimpleService)
+        assert isinstance(instance, SimpleService)
+
+    def test_async_stack_not_leaked_on_circular_dependency(self) -> None:
+        """Test that the async resolution stack is not corrupted by circular dependency."""
+        container = Container()
+        container.register(_CircA)
+        container.register(_CircB)
+
+        async def run() -> SimpleService:
+            with pytest.raises(CircularDependencyError):
+                await container.get_async(_CircA)
+
+            container.register(SimpleService)
+            return await container.get_async(SimpleService)
+
+        instance = asyncio.run(run())
+        assert isinstance(instance, SimpleService)

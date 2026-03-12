@@ -12,12 +12,23 @@ class Factory[T]:
     Each call resolves T from the container, respecting registered scopes.
     """
 
-    __slots__ = ("_resolver",)
+    __slots__ = ("_resolver", "_async_resolver")
 
-    def __init__(self, resolver: Callable[[], T]) -> None:
+    def __init__(
+        self,
+        resolver: Callable[[], T],
+        async_resolver: Callable[[], Any] | None = None,
+    ) -> None:
         self._resolver = resolver
+        self._async_resolver = async_resolver
 
     def __call__(self) -> T:
+        return self._resolver()
+
+    async def acall(self) -> T:
+        """Resolve T asynchronously."""
+        if self._async_resolver is not None:
+            return await self._async_resolver()  # type: ignore[no-any-return]
         return self._resolver()
 
 
@@ -27,16 +38,31 @@ class Lazy[T]:
     First call resolves T from the container. Subsequent calls return the cached instance.
     """
 
-    __slots__ = ("_resolver", "_value", "_resolved")
+    __slots__ = ("_resolver", "_async_resolver", "_value", "_resolved")
 
-    def __init__(self, resolver: Callable[[], T]) -> None:
+    def __init__(
+        self,
+        resolver: Callable[[], T],
+        async_resolver: Callable[[], Any] | None = None,
+    ) -> None:
         self._resolver = resolver
+        self._async_resolver = async_resolver
         self._value: T | None = None
         self._resolved = False
 
     def __call__(self) -> T:
         if not self._resolved:
             self._value = self._resolver()
+            self._resolved = True
+        return self._value  # type: ignore[return-value]
+
+    async def acall(self) -> T:
+        """Resolve T asynchronously, caching the result."""
+        if not self._resolved:
+            if self._async_resolver is not None:
+                self._value = await self._async_resolver()
+            else:
+                self._value = self._resolver()
             self._resolved = True
         return self._value  # type: ignore[return-value]
 
