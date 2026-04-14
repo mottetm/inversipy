@@ -52,14 +52,15 @@ class SingletonStrategy(BindingStrategy):
     """Singleton strategy - one instance per container.
 
     Handles both sync and async factories, ensuring only one instance is created.
-    Thread-safe for both sync and async contexts.
+    Thread-safe for both sync and async contexts: a single threading.Lock
+    coordinates the sync and async paths so concurrent get()/get_async()
+    callers can never both pass the _initialized check.
     """
 
     def __init__(self) -> None:
         self._instance: Any | None = None
         self._initialized = False
-        self._sync_lock = threading.Lock()
-        self._async_lock = asyncio.Lock()
+        self._lock = threading.Lock()
 
     def get(self, factory: Callable[[], Any], is_async_factory: bool) -> Any:
         if is_async_factory:
@@ -70,22 +71,30 @@ class SingletonStrategy(BindingStrategy):
             )
 
         if not self._initialized:
-            with self._sync_lock:
+            with self._lock:
                 if not self._initialized:  # Double-checked locking
                     self._instance = factory()
                     self._initialized = True
         return self._instance
 
     async def get_async(self, factory: Callable[[], Any]) -> Any:
-        if not self._initialized:
-            async with self._async_lock:
-                if not self._initialized:
-                    result = factory()
-                    if asyncio.iscoroutine(result):
-                        self._instance = await result
-                    else:
-                        self._instance = result
-                    self._initialized = True
+        if self._initialized:
+            return self._instance
+        with self._lock:
+            if self._initialized:
+                return self._instance
+            result = factory()
+            if not asyncio.iscoroutine(result):
+                self._instance = result
+                self._initialized = True
+                return self._instance
+        # Async factory: resolve outside the lock so awaits don't block other
+        # threads, then re-acquire to store and re-check on re-entry.
+        instance = await result
+        with self._lock:
+            if not self._initialized:
+                self._instance = instance
+                self._initialized = True
         return self._instance
 
 
