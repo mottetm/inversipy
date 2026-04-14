@@ -1,5 +1,6 @@
 """Type definitions and protocols for the inversipy library."""
 
+import threading
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -38,7 +39,7 @@ class Lazy[T]:
     First call resolves T from the container. Subsequent calls return the cached instance.
     """
 
-    __slots__ = ("_resolver", "_async_resolver", "_value", "_resolved")
+    __slots__ = ("_resolver", "_async_resolver", "_value", "_resolved", "_lock")
 
     def __init__(
         self,
@@ -49,22 +50,30 @@ class Lazy[T]:
         self._async_resolver = async_resolver
         self._value: T | None = None
         self._resolved = False
+        self._lock = threading.Lock()
 
     def __call__(self) -> T:
         if not self._resolved:
-            self._value = self._resolver()
-            self._resolved = True
+            with self._lock:
+                if not self._resolved:
+                    self._value = self._resolver()
+                    self._resolved = True
         return self._value  # type: ignore[return-value]
 
     async def acall(self) -> T:
         """Resolve T asynchronously, caching the result."""
-        if not self._resolved:
-            if self._async_resolver is not None:
-                self._value = await self._async_resolver()
-            else:
-                self._value = self._resolver()
-            self._resolved = True
-        return self._value  # type: ignore[return-value]
+        if self._resolved:
+            return self._value  # type: ignore[return-value]
+        # Resolve outside the lock so awaits don't block other threads.
+        if self._async_resolver is not None:
+            value = await self._async_resolver()
+        else:
+            value = self._resolver()
+        with self._lock:
+            if not self._resolved:
+                self._value = value
+                self._resolved = True
+        return self._value
 
 
 class Named:
