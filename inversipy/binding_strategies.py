@@ -124,14 +124,16 @@ class RequestStrategy(BindingStrategy):
     """Request strategy - one instance per request context.
 
     Uses contextvars to maintain one instance per async context/request,
-    handling both sync and async factories. Thread-safe for sync contexts.
+    handling both sync and async factories.
     """
 
     def __init__(self) -> None:
         self._context_instance: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
             "request_scope_instance", default=None
         )
-        self._sync_lock = threading.Lock()
+        # No lock needed: ContextVar already provides per-context isolation.
+        # Threads (or tasks) in different contexts each see their own value;
+        # a single context is single-threaded by definition.
 
     def get(self, factory: Callable[[], Any], is_async_factory: bool) -> Any:
         if is_async_factory:
@@ -143,12 +145,8 @@ class RequestStrategy(BindingStrategy):
 
         instance = self._context_instance.get()
         if instance is None:
-            with self._sync_lock:
-                # Re-check after acquiring lock (double-checked locking)
-                instance = self._context_instance.get()
-                if instance is None:
-                    instance = factory()
-                    self._context_instance.set(instance)
+            instance = factory()
+            self._context_instance.set(instance)
         return instance
 
     async def get_async(self, factory: Callable[[], Any]) -> Any:
