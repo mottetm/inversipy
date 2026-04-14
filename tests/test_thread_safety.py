@@ -6,10 +6,13 @@ non-determinism of thread-based tests.
 """
 
 import asyncio
+import threading
+import time
 
 import pytest
 
-from inversipy import CircularDependencyError, Container
+from inversipy import CircularDependencyError, Container, Lazy
+from tests._concurrency import CountingResolver
 
 
 class ServiceA:
@@ -124,3 +127,34 @@ class TestResolutionStackIsolation:
 
         for result in results:
             assert isinstance(result, CircularDependencyError)
+
+
+class TestLazyThreadSafety:
+    def test_lazy_resolver_invoked_once_under_contention(self) -> None:
+        """Concurrent calls to Lazy[T] must invoke the resolver exactly once."""
+        release = threading.Event()
+
+        resolver = CountingResolver(wait=lambda: release.wait())
+        lazy = Lazy[object](resolver)
+
+        t1 = threading.Thread(target=lazy)
+        t2 = threading.Thread(target=lazy)
+
+        t1.start()
+        assert resolver.in_resolver.wait(), "t1 never entered the resolver"
+
+        # t1 is parked inside the resolver.
+        # Start t2: Lazy should prevent t2 to enter the resolver
+        # using its internal lock. We can't observe "blocked on a lock" from
+        # outside, so we give t2 a short window to reach that state.
+        t2.start()
+        time.sleep(0.05)
+
+        release.set()
+        t1.join(timeout=1.0)
+        t2.join(timeout=1.0)
+
+        assert not t1.is_alive() and not t2.is_alive(), "worker thread hung"
+        assert (
+            resolver.call_count == 1
+        ), f"resolver was called {resolver.call_count} times — Lazy is not thread-safe"
