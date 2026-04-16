@@ -33,6 +33,13 @@ from .types import (
     make_key,
 )
 
+_RESOLUTION_ERRORS = (
+    ResolutionError,
+    DependencyNotFoundError,
+    CircularDependencyError,
+    AmbiguousDependencyError,
+)
+
 
 class Container:
     """Dependency injection container.
@@ -447,13 +454,7 @@ class Container:
             resolved_kwargs = self._resolve_deps(deps, target, provided=provided_kwargs)
             return func(**resolved_kwargs)
         except Exception as e:
-            resolution_errors = (
-                ResolutionError,
-                DependencyNotFoundError,
-                CircularDependencyError,
-                AmbiguousDependencyError,
-            )
-            if isinstance(e, resolution_errors):
+            if isinstance(e, _RESOLUTION_ERRORS):
                 raise
             raise ResolutionError(f"Failed to run function '{func.__name__}': {e}")
 
@@ -465,13 +466,7 @@ class Container:
             resolved_kwargs = await self._resolve_deps_async(deps, target, provided=provided_kwargs)
             return func(**resolved_kwargs)
         except Exception as e:
-            resolution_errors = (
-                ResolutionError,
-                DependencyNotFoundError,
-                CircularDependencyError,
-                AmbiguousDependencyError,
-            )
-            if isinstance(e, resolution_errors):
+            if isinstance(e, _RESOLUTION_ERRORS):
                 raise
             raise ResolutionError(f"Failed to run function '{func.__name__}': {e}")
 
@@ -528,15 +523,7 @@ class Container:
             kwargs = self._resolve_deps(deps, target)
             return binding._invoke(**kwargs)
         except Exception as e:
-            if isinstance(
-                e,
-                (
-                    ResolutionError,
-                    DependencyNotFoundError,
-                    CircularDependencyError,
-                    AmbiguousDependencyError,
-                ),
-            ):
+            if isinstance(e, _RESOLUTION_ERRORS):
                 raise
             if binding.factory is not None:
                 raise ResolutionError(f"Failed to call factory for {binding.key}: {e}")
@@ -570,15 +557,7 @@ class Container:
                 return await result
             return result
         except Exception as e:
-            if isinstance(
-                e,
-                (
-                    ResolutionError,
-                    DependencyNotFoundError,
-                    CircularDependencyError,
-                    AmbiguousDependencyError,
-                ),
-            ):
+            if isinstance(e, _RESOLUTION_ERRORS):
                 raise
             if binding.factory is not None:
                 raise ResolutionError(f"Failed to call factory for {binding.key}: {e}")
