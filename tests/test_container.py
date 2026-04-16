@@ -607,7 +607,7 @@ class TestBindingErrorPaths:
     def test_binding_no_args_raises(self) -> None:
         """Binding with no factory, implementation, or instance raises RegistrationError."""
         from inversipy import RegistrationError
-        from inversipy.container import Binding
+        from inversipy.binding import Binding
 
         with pytest.raises(RegistrationError, match="Must provide either"):
             Binding(key=SimpleService, factory=None, implementation=None, instance=None)
@@ -615,7 +615,7 @@ class TestBindingErrorPaths:
     def test_binding_unknown_scope_raises(self) -> None:
         """Binding with an unknown scope raises InvalidScopeError."""
         from inversipy import InvalidScopeError
-        from inversipy.container import Binding
+        from inversipy.binding import Binding
 
         # Create a fake scope value
         with pytest.raises(InvalidScopeError, match="Unknown scope"):
