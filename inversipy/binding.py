@@ -330,27 +330,22 @@ class Binding:
             case _:
                 raise InvalidScopeError(f"Unknown scope: '{scope}'", scope_name=str(scope))
 
-    def create_lazy_wrapper(
-        self, container: "Container", dep_type: type, dep_name: str | None
+    def _build_lazy_wrapper(
+        self,
+        container: "Container",
+        dep_type: type,
+        dep_name: str | None,
+        *,
+        with_async: bool,
     ) -> "Lazy[Any]":
-        """Create a Lazy wrapper cached through this binding's scope strategy."""
+        """Cache and return a Lazy wrapper, optionally with async resolution."""
 
         def wrapper_factory() -> Lazy[Any]:
             def resolver(_t: type = dep_type, _n: str | None = dep_name) -> Any:
                 return container.get(_t, name=_n)
 
-            return Lazy(resolver)
-
-        return self._lazy_strategy.get(wrapper_factory, is_async_factory=False)  # type: ignore[no-any-return]
-
-    def create_lazy_wrapper_async(
-        self, container: "Container", dep_type: type, dep_name: str | None
-    ) -> "Lazy[Any]":
-        """Create a Lazy wrapper with async support, cached via scope strategy."""
-
-        def wrapper_factory() -> Lazy[Any]:
-            def resolver(_t: type = dep_type, _n: str | None = dep_name) -> Any:
-                return container.get(_t, name=_n)
+            if not with_async:
+                return Lazy(resolver)
 
             async def async_resolver(_t: type = dep_type, _n: str | None = dep_name) -> Any:
                 return await container.get_async(_t, name=_n)
@@ -358,6 +353,18 @@ class Binding:
             return Lazy(resolver, async_resolver)
 
         return self._lazy_strategy.get(wrapper_factory, is_async_factory=False)  # type: ignore[no-any-return]
+
+    def create_lazy_wrapper(
+        self, container: "Container", dep_type: type, dep_name: str | None
+    ) -> "Lazy[Any]":
+        """Create a Lazy wrapper cached through this binding's scope strategy."""
+        return self._build_lazy_wrapper(container, dep_type, dep_name, with_async=False)
+
+    def create_lazy_wrapper_async(
+        self, container: "Container", dep_type: type, dep_name: str | None
+    ) -> "Lazy[Any]":
+        """Create a Lazy wrapper with async support, cached via scope strategy."""
+        return self._build_lazy_wrapper(container, dep_type, dep_name, with_async=True)
 
     def create_instance(self, container: "Container") -> Any:
         """Create an instance of the dependency (sync context)."""
