@@ -437,16 +437,19 @@ class TestCycleDetectionInValidation:
         """Optional deps that are not registered don't produce cycle-detection edges."""
 
         class OptionalConsumer:
-            def __init__(self, a: ServiceA, b: ServiceB | None = None) -> None:
+            def __init__(self, a: ServiceA, b: ServiceB | None) -> None:
                 self.a = a
                 self.b = b
 
         container = Container()
         container.register(ServiceA)
         container.register(OptionalConsumer)
-        # ServiceB is NOT registered — optional dep should be silently skipped
-
-        container.validate()  # Should not raise
+        # ServiceB is NOT registered — cycle detection should skip the optional dep
+        # rather than following it into unresolvable territory.
+        # (We call _detect_cycles directly because validate() has a separate
+        # per-dep check that flags unregistered deps independently of cycles.)
+        cycles = container._detect_cycles()
+        assert len(cycles) == 0
 
     def test_validation_collection_dep_does_not_introduce_false_cycle(self) -> None:
         """InjectAll deps fan out to all matching bindings without false cycles."""

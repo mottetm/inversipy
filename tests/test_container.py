@@ -662,6 +662,49 @@ class TestBindingErrorPaths:
         with pytest.raises(ResolutionError, match="Failed to call factory"):
             container.get(DependentService)
 
+    def test_class_with_deps_raising_non_resolution_exception(self) -> None:
+        """Class __init__ raising ValueError should be wrapped in ResolutionError."""
+        container = Container()
+        container.register(SimpleService)
+
+        class BrokenInit:
+            def __init__(self, simple: SimpleService) -> None:
+                raise ValueError("init failed")
+
+        container.register(BrokenInit)
+
+        with pytest.raises(ResolutionError, match="Failed to create instance"):
+            container.get(BrokenInit)
+
+    @pytest.mark.asyncio
+    async def test_async_factory_raising_non_resolution_exception(self) -> None:
+        """Async: factory raising ValueError should be wrapped in ResolutionError."""
+        container = Container()
+        container.register(SimpleService)
+
+        def bad_factory(simple: SimpleService) -> DependentService:
+            raise ValueError("something went wrong")
+
+        container.register_factory(DependentService, bad_factory)
+
+        with pytest.raises(ResolutionError, match="Failed to call factory"):
+            await container.get_async(DependentService)
+
+    @pytest.mark.asyncio
+    async def test_async_class_raising_non_resolution_exception(self) -> None:
+        """Async: class __init__ raising ValueError should be wrapped in ResolutionError."""
+        container = Container()
+        container.register(SimpleService)
+
+        class BrokenInit:
+            def __init__(self, simple: SimpleService) -> None:
+                raise ValueError("init failed")
+
+        container.register(BrokenInit)
+
+        with pytest.raises(ResolutionError, match="Failed to create instance"):
+            await container.get_async(BrokenInit)
+
     @pytest.mark.asyncio
     async def test_async_create_instance_with_preexisting_instance(self) -> None:
         """Async create_instance should return pre-existing instance."""
