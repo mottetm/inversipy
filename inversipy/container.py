@@ -492,6 +492,16 @@ class Container:
         target = f"class '{cls.__name__}'"
         return await self._resolve_deps_async(deps, target), {}
 
+    @staticmethod
+    def _wrap_instantiate_error(e: Exception, binding: "Binding") -> ResolutionError:
+        """Wrap a non-resolution exception with binding context."""
+        if binding.factory is not None:
+            return ResolutionError(f"Failed to call factory for {binding.key}: {e}")
+        assert binding.implementation is not None
+        return ResolutionError(
+            f"Failed to create instance of {binding.implementation.__name__}: {e}"
+        )
+
     def _instantiate_binding(self, binding: "Binding") -> Any:
         """Create an instance from a binding, resolving its dependencies.
 
@@ -524,12 +534,7 @@ class Container:
         except Exception as e:
             if isinstance(e, _RESOLUTION_ERRORS):
                 raise
-            if binding.factory is not None:
-                raise ResolutionError(f"Failed to call factory for {binding.key}: {e}")
-            assert binding.implementation is not None
-            raise ResolutionError(
-                f"Failed to create instance of {binding.implementation.__name__}: {e}"
-            )
+            raise self._wrap_instantiate_error(e, binding)
 
     async def _instantiate_binding_async(self, binding: "Binding") -> Any:
         """Create an instance from a binding asynchronously, resolving deps."""
@@ -558,12 +563,7 @@ class Container:
         except Exception as e:
             if isinstance(e, _RESOLUTION_ERRORS):
                 raise
-            if binding.factory is not None:
-                raise ResolutionError(f"Failed to call factory for {binding.key}: {e}")
-            assert binding.implementation is not None
-            raise ResolutionError(
-                f"Failed to create instance of {binding.implementation.__name__}: {e}"
-            )
+            raise self._wrap_instantiate_error(e, binding)
 
     def create_child(self, name: str | None = None) -> "Container":
         """Create a child container."""
