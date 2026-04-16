@@ -2,7 +2,7 @@
 
 import pytest
 
-from inversipy import Container, Factory, Lazy, ValidationError
+from inversipy import Container, Factory, InjectAll, Lazy, ValidationError
 
 
 class ServiceA:
@@ -432,6 +432,34 @@ class TestCycleDetectionInValidation:
         container.register(FactoryDepB)
 
         container.validate()  # Should not raise — Factory breaks the cycle
+
+    def test_validation_optional_dep_skipped_when_missing(self) -> None:
+        """Optional deps that are not registered don't produce cycle-detection edges."""
+
+        class OptionalConsumer:
+            def __init__(self, a: ServiceA, b: ServiceB | None = None) -> None:
+                self.a = a
+                self.b = b
+
+        container = Container()
+        container.register(ServiceA)
+        container.register(OptionalConsumer)
+        # ServiceB is NOT registered — optional dep should be silently skipped
+
+        container.validate()  # Should not raise
+
+    def test_validation_collection_dep_does_not_introduce_false_cycle(self) -> None:
+        """InjectAll deps fan out to all matching bindings without false cycles."""
+
+        class PluginConsumer:
+            def __init__(self, plugins: InjectAll[ServiceA]) -> None:
+                self.plugins = plugins
+
+        container = Container()
+        container.register(ServiceA)
+        container.register(PluginConsumer)
+
+        container.validate()  # Should not raise
 
     def test_validation_cycle_detection_ignores_instances(self) -> None:
         """Test that cycle detection skips instance registrations."""
