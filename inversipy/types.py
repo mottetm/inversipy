@@ -2,6 +2,7 @@
 
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 type FactoryCallable[T] = Callable[..., T]
@@ -76,6 +77,7 @@ class Lazy[T]:
         return self._value
 
 
+@dataclass(frozen=True, slots=True, eq=False)
 class Named:
     """Qualifier for named dependency injection.
 
@@ -94,24 +96,13 @@ class Named:
         replica = container.get(IDatabase, name="replica")
     """
 
-    __slots__ = ("name",)
-    __match_args__ = ("name",)
+    name: str
 
-    def __init__(self, name: str) -> None:
-        """Initialize a Named qualifier.
-
-        Args:
-            name: The qualifier name for this dependency
-
-        Raises:
-            TypeError: If name is not a string
-            ValueError: If name is empty or whitespace-only
-        """
-        if not isinstance(name, str):
-            raise TypeError(f"Named qualifier must be a string, got {type(name).__name__}")
-        if not name or not name.strip():
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str):
+            raise TypeError(f"Named qualifier must be a string, got {type(self.name).__name__}")
+        if not self.name or not self.name.strip():
             raise ValueError("Named qualifier cannot be empty or whitespace-only")
-        self.name = name
 
     def __repr__(self) -> str:
         return f'Named("{self.name}")'
