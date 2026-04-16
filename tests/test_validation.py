@@ -2,7 +2,7 @@
 
 import pytest
 
-from inversipy import Container, ValidationError
+from inversipy import Container, Factory, Lazy, ValidationError
 
 
 class ServiceA:
@@ -192,6 +192,55 @@ class SelfDependent:
         self.self_ref = self_ref
 
 
+class LazyConsumerA:
+    """Service that lazily depends on LazyDepB."""
+
+    def __init__(self, b: Lazy["LazyDepB"]) -> None:
+        self.b = b
+
+
+class LazyDepB:
+    """Service that depends on LazyConsumerA."""
+
+    def __init__(self, a: LazyConsumerA) -> None:
+        self.a = a
+
+
+class LazyRootA:
+    """Service that lazily depends on InternalCycleB."""
+
+    def __init__(self, b: Lazy["InternalCycleB"]) -> None:
+        self.b = b
+
+
+class InternalCycleB:
+    """Service in B <-> C cycle, reachable via Lazy from LazyRootA."""
+
+    def __init__(self, c: "InternalCycleC") -> None:
+        self.c = c
+
+
+class InternalCycleC:
+    """Service in B <-> C cycle."""
+
+    def __init__(self, b: InternalCycleB) -> None:
+        self.b = b
+
+
+class FactoryConsumerA:
+    """Service that depends on FactoryDepB via Factory wrapper."""
+
+    def __init__(self, b: Factory["FactoryDepB"]) -> None:
+        self.b = b
+
+
+class FactoryDepB:
+    """Service that depends on FactoryConsumerA."""
+
+    def __init__(self, a: FactoryConsumerA) -> None:
+        self.a = a
+
+
 class TestCycleDetectionInValidation:
     """Test that validation detects circular dependencies."""
 
@@ -250,15 +299,139 @@ class TestCycleDetectionInValidation:
         # Should not raise
         container.validate()
 
-    def test_validation_cycle_detection_ignores_factories(self) -> None:
-        """Test that cycle detection skips factory registrations."""
+    def test_validation_skips_factories_without_type_hints(self) -> None:
+        """Factories with untyped parameters produce no cycle-detection edges."""
         container = Container()
-        # Factories can handle circular deps manually, so we don't validate them
+        # Untyped lambdas: analyze_parameters() cannot resolve their deps,
+        # so no graph edges are produced — no cycle is reported.
         container.register_factory(CircularA, lambda b: CircularA(b))
         container.register_factory(CircularB, lambda a: CircularB(a))
 
-        # Should not raise - factories are skipped
-        container.validate()
+        container.validate()  # Should not raise
+
+    def test_validation_detects_typed_factory_cycle(self) -> None:
+        """Two typed factories forming A <-> B cycle should be detected."""
+        container = Container()
+
+        def make_a(b: CircularB) -> CircularA:
+            return CircularA(b)
+
+        def make_b(a: CircularA) -> CircularB:
+            return CircularB(a)
+
+        container.register_factory(CircularA, make_a)
+        container.register_factory(CircularB, make_b)
+
+        with pytest.raises(ValidationError) as exc_info:
+            container.validate()
+
+        error_msg = str(exc_info.value)
+        assert "Circular dependency detected" in error_msg
+        assert "CircularA" in error_msg
+        assert "CircularB" in error_msg
+
+    def test_validation_detects_longer_typed_factory_cycle(self) -> None:
+        """Three typed factories forming C -> D -> E -> C should be detected."""
+        container = Container()
+
+        def make_c(d: CircularD) -> CircularC:
+            return CircularC(d)
+
+        def make_d(e: CircularE) -> CircularD:
+            return CircularD(e)
+
+        def make_e(c: CircularC) -> CircularE:
+            return CircularE(c)
+
+        container.register_factory(CircularC, make_c)
+        container.register_factory(CircularD, make_d)
+        container.register_factory(CircularE, make_e)
+
+        with pytest.raises(ValidationError) as exc_info:
+            container.validate()
+
+        error_msg = str(exc_info.value)
+        assert "Circular dependency detected" in error_msg
+        assert "CircularC" in error_msg
+        assert "CircularD" in error_msg
+        assert "CircularE" in error_msg
+
+    def test_validation_detects_self_referential_typed_factory(self) -> None:
+        """A factory whose typed param is its own return type should be detected."""
+        container = Container()
+
+        def make_self(s: SelfDependent) -> SelfDependent:
+            return SelfDependent(s)
+
+        container.register_factory(SelfDependent, make_self)
+
+        with pytest.raises(ValidationError) as exc_info:
+            container.validate()
+
+        error_msg = str(exc_info.value)
+        assert "Circular dependency detected" in error_msg
+        assert "SelfDependent" in error_msg
+
+    def test_validation_detects_mixed_factory_and_class_cycle(self) -> None:
+        """A cycle spanning a class registration and a typed factory should be detected."""
+        container = Container()
+
+        def make_b(a: CircularA) -> CircularB:
+            return CircularB(a)
+
+        container.register(CircularA)  # class: depends on CircularB
+        container.register_factory(CircularB, make_b)  # factory: depends on CircularA
+
+        with pytest.raises(ValidationError) as exc_info:
+            container.validate()
+
+        error_msg = str(exc_info.value)
+        assert "Circular dependency detected" in error_msg
+        assert "CircularA" in error_msg
+        assert "CircularB" in error_msg
+
+    def test_validation_passes_for_typed_factory_without_cycle(self) -> None:
+        """A typed factory with non-cyclic deps should pass validation."""
+        container = Container()
+
+        def make_c(a: ServiceA) -> ServiceC:
+            return ServiceC(ServiceB(a))
+
+        container.register(ServiceA)
+        container.register_factory(ServiceC, make_c)
+
+        container.validate()  # Should not raise
+
+    def test_validation_lazy_breaks_direct_cycle(self) -> None:
+        """Lazy[T] breaks a direct cycle: A(b: Lazy[B]) + B(a: A) is not circular."""
+        container = Container()
+        container.register(LazyConsumerA)
+        container.register(LazyDepB)
+
+        container.validate()  # Should not raise — Lazy breaks the cycle
+
+    def test_validation_lazy_does_not_hide_internal_cycle(self) -> None:
+        """Lazy breaks the outer edge but internal subgraph cycles are still caught."""
+        container = Container()
+        container.register(LazyRootA)
+        container.register(InternalCycleB)
+        container.register(InternalCycleC)
+
+        with pytest.raises(ValidationError) as exc_info:
+            container.validate()
+
+        error_msg = str(exc_info.value)
+        assert "Circular dependency detected" in error_msg
+        assert "InternalCycleB" in error_msg
+        assert "InternalCycleC" in error_msg
+
+    def test_validation_factory_wrapper_breaks_cycle(self) -> None:
+        """Factory[T] breaks a direct cycle the same way Lazy[T] does."""
+        container = Container()
+        container.register(FactoryConsumerA)
+        container.register(FactoryDepB)
+
+        container.validate()  # Should not raise — Factory breaks the cycle
 
     def test_validation_cycle_detection_ignores_instances(self) -> None:
         """Test that cycle detection skips instance registrations."""
