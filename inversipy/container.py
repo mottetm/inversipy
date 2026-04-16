@@ -4,6 +4,7 @@ import asyncio
 import contextvars
 import inspect
 import types as types_mod
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -354,6 +355,20 @@ class Binding:
             sig = inspect.signature(factory)
             self._factory_has_params = len(sig.parameters) > 0
 
+        # Unified provider/invoke callables.
+        # _provider: what to introspect for dependency types (via analyze_parameters).
+        # _invoke: what to call with resolved kwargs to produce an instance.
+        # They differ for classes: _provider = cls.__init__ (for correct get_type_hints),
+        # _invoke = cls (calling cls(**kwargs) invokes __init__ via Python's protocol).
+        self._provider: Callable[..., Any] | None = None
+        self._invoke: Callable[..., Any] | None = None
+        if factory is not None:
+            self._provider = factory
+            self._invoke = factory
+        elif implementation is not None:
+            self._provider = implementation.__init__
+            self._invoke = implementation
+
         self._strategy = self._create_strategy(scope)
         self._lazy_strategy = self._create_strategy(scope)
 
@@ -405,77 +420,30 @@ class Binding:
         if self.instance is not None:
             return self.instance
 
-        if self.factory is not None:
-            if self._factory_has_params:
-                factory = self.factory
-
-                def factory_func() -> Any:
-                    return self._call_factory_with_deps(container, factory)
-
-            else:
-                factory_func = self.factory
-        elif self.implementation is not None:
-            implementation = self.implementation
+        if self.factory is not None and not self._factory_has_params:
+            factory_func = self.factory  # Parameterless fast-path
+        else:
+            binding = self
 
             def factory_func() -> Any:
-                return container._create_instance(implementation)
-
-        else:
-            raise ResolutionError(f"Cannot create instance for {self.key}")
+                return container._instantiate_binding(binding)
 
         return self._strategy.get(factory_func, self._is_async_factory)
-
-    def _call_factory_with_deps(self, container: "Container", factory: Callable[..., Any]) -> Any:
-        """Call a factory function, resolving its dependencies from the container."""
-        try:
-            deps = analyze_parameters(factory)
-            kwargs = container._resolve_deps(deps, f"factory for {self.key}")
-            return factory(**kwargs)
-        except Exception as e:
-            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
-                raise
-            raise ResolutionError(f"Failed to call factory for {self.key}: {e}")
 
     async def create_instance_async(self, container: "Container") -> Any:
         """Create an instance of the dependency (async context)."""
         if self.instance is not None:
             return self.instance
 
-        if self.factory is not None:
-            if self._factory_has_params:
-                factory = self.factory
-
-                async def factory_func() -> Any:
-                    return await self._call_factory_with_deps_async(container, factory)
-
-            else:
-                factory_func = self.factory
-        elif self.implementation is not None:
-            implementation = self.implementation
+        if self.factory is not None and not self._factory_has_params:
+            factory_func = self.factory  # Parameterless fast-path
+        else:
+            binding = self
 
             async def factory_func() -> Any:
-                return await container._create_instance_async(implementation)
-
-        else:
-            raise ResolutionError(f"Cannot create instance for {self.key}")
+                return await container._instantiate_binding_async(binding)
 
         return await self._strategy.get_async(factory_func)
-
-    async def _call_factory_with_deps_async(
-        self, container: "Container", factory: Callable[..., Any]
-    ) -> Any:
-        """Call a factory function asynchronously, resolving dependencies."""
-        try:
-            deps = analyze_parameters(factory)
-            kwargs = await container._resolve_deps_async(deps, f"factory for {self.key}")
-            result = factory(**kwargs)
-            if asyncio.iscoroutine(result):
-                return await result
-            return result
-        except Exception as e:
-            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
-                raise
-            raise ResolutionError(f"Failed to call factory for {self.key}: {e}")
 
 
 class Container:
@@ -942,127 +910,172 @@ class Container:
         target = f"class '{cls.__name__}'"
         return await self._resolve_deps_async(deps, target), {}
 
-    def _create_instance[T](self, cls: type[T]) -> T:
-        """Create an instance of a class, resolving its dependencies."""
-        try:
-            injectable_result = self._resolve_injectable_deps(cls)
-            if injectable_result is not None:
-                injectable_kwargs, _ = injectable_result
-                return cls(**injectable_kwargs)
+    def _instantiate_binding(self, binding: "Binding") -> Any:
+        """Create an instance from a binding, resolving its dependencies.
 
-            deps = analyze_parameters(cls.__init__, skip_self=True)
-            target = f"class '{cls.__name__}'"
+        Handles both factory-based and implementation-based bindings uniformly
+        via binding._provider (what to introspect) and binding._invoke (what to
+        call with resolved kwargs).
+        """
+        try:
+            # @Injectable fast-path (class-only decorator metadata)
+            if binding.implementation is not None:
+                injectable_result = self._resolve_injectable_deps(binding.implementation)
+                if injectable_result is not None:
+                    injectable_kwargs, _ = injectable_result
+                    return binding.implementation(**injectable_kwargs)
+
+            # Generic path: analyze _provider, resolve deps, invoke.
+            # _provider and _invoke are guaranteed non-None for non-instance
+            # bindings (set in Binding.__init__); instance bindings exit via
+            # the early return in create_instance/create_instance_async.
+            assert binding._provider is not None
+            assert binding._invoke is not None
+            deps = analyze_parameters(binding._provider, skip_self=True)
+            target = (
+                f"class '{binding.implementation.__name__}'"
+                if binding.implementation is not None
+                else f"factory for {binding.key}"
+            )
             kwargs = self._resolve_deps(deps, target)
-            return cls(**kwargs)
+            return binding._invoke(**kwargs)
         except Exception as e:
             if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
                 raise
-            raise ResolutionError(f"Failed to create instance of {cls.__name__}: {e}")
+            if binding.factory is not None:
+                raise ResolutionError(f"Failed to call factory for {binding.key}: {e}")
+            assert binding.implementation is not None
+            raise ResolutionError(
+                f"Failed to create instance of {binding.implementation.__name__}: {e}"
+            )
 
-    async def _create_instance_async[T](self, cls: type[T]) -> T:
-        """Create an instance of a class asynchronously, resolving its dependencies."""
+    async def _instantiate_binding_async(self, binding: "Binding") -> Any:
+        """Create an instance from a binding asynchronously, resolving deps."""
         try:
-            injectable_result = await self._resolve_injectable_deps_async(cls)
-            if injectable_result is not None:
-                injectable_kwargs, _ = injectable_result
-                return cls(**injectable_kwargs)
+            if binding.implementation is not None:
+                injectable_result = await self._resolve_injectable_deps_async(
+                    binding.implementation
+                )
+                if injectable_result is not None:
+                    injectable_kwargs, _ = injectable_result
+                    return binding.implementation(**injectable_kwargs)
 
-            deps = analyze_parameters(cls.__init__, skip_self=True)
-            target = f"class '{cls.__name__}'"
+            assert binding._provider is not None
+            assert binding._invoke is not None
+            deps = analyze_parameters(binding._provider, skip_self=True)
+            target = (
+                f"class '{binding.implementation.__name__}'"
+                if binding.implementation is not None
+                else f"factory for {binding.key}"
+            )
             kwargs = await self._resolve_deps_async(deps, target)
-            return cls(**kwargs)
+            result = binding._invoke(**kwargs)
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
         except Exception as e:
             if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
                 raise
-            raise ResolutionError(f"Failed to create instance of {cls.__name__}: {e}")
+            if binding.factory is not None:
+                raise ResolutionError(f"Failed to call factory for {binding.key}: {e}")
+            assert binding.implementation is not None
+            raise ResolutionError(
+                f"Failed to create instance of {binding.implementation.__name__}: {e}"
+            )
 
     def create_child(self, name: str | None = None) -> "Container":
         """Create a child container."""
         child_name = name if name else f"{self._name}.Child"
         return Container(parent=self, name=child_name)
 
-    def _get_implementation_dependencies(self, cls: type[Any]) -> list[type[Any]]:
-        """Get the dependency types required by a class implementation."""
-        dependencies: list[type[Any]] = []
-        try:
-            deps = analyze_parameters(cls.__init__, skip_self=True)
-            for dep in deps:
-                if dep.dep_type is not _MissingType and not dep.has_default:
-                    dependencies.append(dep.dep_type)
-        except Exception:
-            pass
-        return dependencies
-
     def _detect_cycles(self) -> list[list[type[Any]]]:
         """Detect circular dependencies in the container.
+
+        Uses multi-root DFS over all registered bindings. Dependencies are
+        extracted from each binding's ``_provider`` callable uniformly — no
+        distinction between factories and class implementations.
+
+        Lazy[T] and Factory[T] wrapper edges do not recurse in the current
+        traversal (they defer resolution at runtime) but are enqueued as
+        independent roots so that cycles *within* the deferred subgraph are
+        still detected.
 
         Note: This method accesses module._bindings via hasattr checks because
         cycle detection requires inspecting internal binding state. This is
         intentional duck-typing — only Container-based modules support validation.
         """
-        graph: dict[type[Any], list[type[Any]]] = {}
-
-        for key, bindings in self._bindings.items():
-            for binding in bindings:
-                if binding.instance is not None or binding.factory is not None:
-                    continue
-                if binding.implementation is not None:
-                    node_type = get_type_from_key(key)
-                    deps = self._get_implementation_dependencies(binding.implementation)
-                    registered_deps = [
-                        d
-                        for d in deps
-                        if d in self._bindings
-                        or any(d in m._bindings for m in self._modules if hasattr(m, "_bindings"))
-                    ]
-                    graph[node_type] = registered_deps
-
+        # Collect all binding sources into a unified lookup.
+        all_bindings: dict[DependencyKey, list[Binding]] = dict(self._bindings)
         for module in self._modules:
             if hasattr(module, "_bindings"):
                 for key, bindings in module._bindings.items():
-                    for binding in bindings:
-                        if binding.instance is not None or binding.factory is not None:
-                            continue
-                        if binding.implementation is not None:
-                            node_type = get_type_from_key(key)
-                            deps = self._get_implementation_dependencies(binding.implementation)
-                            registered_deps = [
-                                d
-                                for d in deps
-                                if d in self._bindings
-                                or d in module._bindings
-                                or any(
-                                    d in m._bindings
-                                    for m in self._modules
-                                    if hasattr(m, "_bindings")
-                                )
-                            ]
-                            graph[node_type] = registered_deps
+                    all_bindings.setdefault(key, []).extend(bindings)
 
-        cycles: list[list[type[Any]]] = []
-        visited: set[type[Any]] = set()
-        rec_stack: set[type[Any]] = set()
+        def _is_registered(dep_key: DependencyKey) -> bool:
+            return dep_key in all_bindings
+
+        # Seed all registered keys as roots.
+        roots: deque[DependencyKey] = deque(all_bindings.keys())
+        global_visited: set[DependencyKey] = set()
+        rec_stack: set[DependencyKey] = set()
         path: list[type[Any]] = []
+        cycles: list[list[type[Any]]] = []
 
-        def dfs(node: type[Any]) -> None:
-            visited.add(node)
-            rec_stack.add(node)
-            path.append(node)
+        def dfs(key: DependencyKey) -> None:
+            if key in global_visited:
+                return
+            if key in rec_stack:
+                node_type = get_type_from_key(key)
+                cycle_start = path.index(node_type)
+                cycles.append(path[cycle_start:] + [node_type])
+                return
 
-            for neighbor in graph.get(node, []):
-                if neighbor not in visited:
-                    dfs(neighbor)
-                elif neighbor in rec_stack:
-                    cycle_start = path.index(neighbor)
-                    cycle = path[cycle_start:] + [neighbor]
-                    cycles.append(cycle)
+            rec_stack.add(key)
+            path.append(get_type_from_key(key))
 
+            bindings = all_bindings.get(key, [])
+            for binding in bindings:
+                if binding._provider is None:
+                    continue  # Instance bindings have no deps
+
+                try:
+                    deps = analyze_parameters(binding._provider, skip_self=True)
+                except Exception:
+                    continue
+
+                for dep in deps:
+                    if dep.dep_type is _MissingType or dep.has_default:
+                        continue
+
+                    dep_key = make_key(dep.dep_type, dep.dep_name)
+
+                    if dep.wrapper_type in (Lazy, Factory):
+                        # Deferred resolution — don't recurse, schedule as new root
+                        if dep_key not in global_visited:
+                            roots.append(dep_key)
+                        continue
+
+                    if dep.is_optional and not _is_registered(dep_key):
+                        continue
+
+                    if dep.is_collection:
+                        # Fan out to all bindings matching this type
+                        for registered_key in all_bindings:
+                            if get_type_from_key(registered_key) == dep.dep_type:
+                                dfs(registered_key)
+                        continue
+
+                    if _is_registered(dep_key):
+                        dfs(dep_key)
+
+            rec_stack.remove(key)
             path.pop()
-            rec_stack.remove(node)
+            global_visited.add(key)
 
-        for node in graph:
-            if node not in visited:
-                dfs(node)
+        while roots:
+            root = roots.popleft()
+            if root not in global_visited:
+                dfs(root)
 
         return cycles
 
