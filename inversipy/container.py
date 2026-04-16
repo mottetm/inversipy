@@ -952,7 +952,10 @@ class Container:
             kwargs = self._resolve_deps(deps, target)
             return binding._invoke(**kwargs)
         except Exception as e:
-            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError, AmbiguousDependencyError)):
+            if isinstance(e, (
+                ResolutionError, DependencyNotFoundError,
+                CircularDependencyError, AmbiguousDependencyError,
+            )):
                 raise
             if binding.factory is not None:
                 raise ResolutionError(f"Failed to call factory for {binding.key}: {e}")
@@ -986,7 +989,10 @@ class Container:
                 return await result
             return result
         except Exception as e:
-            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError, AmbiguousDependencyError)):
+            if isinstance(e, (
+                ResolutionError, DependencyNotFoundError,
+                CircularDependencyError, AmbiguousDependencyError,
+            )):
                 raise
             if binding.factory is not None:
                 raise ResolutionError(f"Failed to call factory for {binding.key}: {e}")
