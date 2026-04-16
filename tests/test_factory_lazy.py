@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 import pytest
 
 from inversipy import (
+    AmbiguousDependencyError,
     CircularDependencyError,
     Container,
     DependencyNotFoundError,
@@ -264,6 +265,60 @@ class TestLazy:
         dep = container.get(DependentWithLazy)
         with pytest.raises((DependencyNotFoundError, ResolutionError)):
             dep.lazy()
+
+    def test_lazy_ambiguous_bindings_raises_eagerly(self) -> None:
+        """Ambiguous bindings for Lazy[T] should raise at resolution time, not call time."""
+        container = Container()
+        container.register(IService, ServiceA)
+        container.register(IService, ServiceB)
+
+        class Consumer:
+            def __init__(self, service: Lazy[IService]) -> None:
+                self.service = service
+
+        container.register(Consumer)
+
+        with pytest.raises(AmbiguousDependencyError):
+            container.get(Consumer)
+
+    def test_async_lazy_ambiguous_bindings_raises_eagerly(self) -> None:
+        """Ambiguous bindings for Lazy[T] should raise at async resolution time."""
+        container = Container()
+        container.register(IService, ServiceA)
+        container.register(IService, ServiceB)
+
+        class Consumer:
+            def __init__(self, service: Lazy[IService]) -> None:
+                self.service = service
+
+        container.register(Consumer)
+
+        async def run() -> None:
+            await container.get_async(Consumer)
+
+        with pytest.raises(AmbiguousDependencyError):
+            asyncio.run(run())
+
+    def test_lazy_ambiguous_after_resolution_raises_at_call_time(self) -> None:
+        """If container becomes ambiguous after Lazy is created, error at call time."""
+        container = Container()
+        container.register(IService, ServiceA)
+
+        class Consumer:
+            def __init__(self, service: Lazy[IService]) -> None:
+                self.service = service
+
+        container.register(Consumer)
+
+        # Resolve with a single binding — Lazy wrapper is created successfully
+        consumer = container.get(Consumer)
+
+        # Now add a second binding, making it ambiguous
+        container.register(IService, ServiceB)
+
+        # The Lazy's resolver calls container.get(), which detects ambiguity
+        with pytest.raises(AmbiguousDependencyError):
+            consumer.service()
 
 
 class TestFactoryAcall:

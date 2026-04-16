@@ -94,6 +94,12 @@ def _make_wrapper(
     binding = container._find_binding(key)
     if binding is not None:
         return binding.create_lazy_wrapper(container, dep_type, dep_name)
+
+    # Raise eagerly if ambiguous, rather than deferring to Lazy call time
+    bindings = container._bindings.get(key, [])
+    if len(bindings) > 1:
+        raise AmbiguousDependencyError(dep_type, len(bindings), container._name)
+
     return Lazy(resolver)
 
 
@@ -115,6 +121,12 @@ def _make_wrapper_async(
     binding = container._find_binding(key)
     if binding is not None:
         return binding.create_lazy_wrapper_async(container, dep_type, dep_name)
+
+    # Raise eagerly if ambiguous, rather than deferring to Lazy call time
+    bindings = container._bindings.get(key, [])
+    if len(bindings) > 1:
+        raise AmbiguousDependencyError(dep_type, len(bindings), container._name)
+
     return Lazy(sync_resolver, async_resolver)
 
 
@@ -940,7 +952,7 @@ class Container:
             kwargs = self._resolve_deps(deps, target)
             return binding._invoke(**kwargs)
         except Exception as e:
-            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
+            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError, AmbiguousDependencyError)):
                 raise
             if binding.factory is not None:
                 raise ResolutionError(f"Failed to call factory for {binding.key}: {e}")
@@ -974,7 +986,7 @@ class Container:
                 return await result
             return result
         except Exception as e:
-            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError)):
+            if isinstance(e, (ResolutionError, DependencyNotFoundError, CircularDependencyError, AmbiguousDependencyError)):
                 raise
             if binding.factory is not None:
                 raise ResolutionError(f"Failed to call factory for {binding.key}: {e}")
