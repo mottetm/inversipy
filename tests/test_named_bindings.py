@@ -559,6 +559,27 @@ class TestNamedMarkerClass:
         with pytest.raises(TypeError, match="must be a string"):
             Named(123)  # type: ignore[arg-type]
 
+    def test_named_is_immutable(self) -> None:
+        """Test that Named instances cannot be mutated after creation."""
+        n = Named("primary")
+        with pytest.raises(AttributeError):
+            n.name = "changed"  # type: ignore[misc]
+
+    def test_named_hash_stability_after_mutation_attempt(self) -> None:
+        """Test that hash remains stable (mutation is blocked, hash doesn't change)."""
+        n = Named("primary")
+        original_hash = hash(n)
+        with pytest.raises(AttributeError):
+            n.name = "changed"  # type: ignore[misc]
+        assert hash(n) == original_hash
+        assert hash(n) == hash(("Named", "primary"))
+
+    def test_named_delete_blocked(self) -> None:
+        """Test that deleting name attribute is blocked."""
+        n = Named("primary")
+        with pytest.raises(AttributeError):
+            del n.name  # type: ignore[misc]
+
 
 class TestNamedBindingsErrorMessages:
     """Test error messages include name information."""
