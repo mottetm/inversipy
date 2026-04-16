@@ -95,6 +95,22 @@ This makes it easier to:
 - Revert specific changes if needed
 - Understand the history of the codebase
 
+## Bug Fixes: TDD Style
+
+When fixing bugs, follow a **Test-Driven Development** workflow:
+
+1. **Write a failing test first** — Create a test that reproduces the bug and confirms it fails
+2. **Run the test** — Verify it fails for the expected reason
+3. **Implement the fix** — Make the minimal code change to fix the bug
+4. **Run the test again** — Verify it now passes
+5. **Run the full test suite** — Ensure no regressions
+
+### Rationale:
+
+- The failing test proves the bug exists and is reproducible
+- The fix is validated against a concrete test case
+- Prevents regressions by keeping the test in the suite
+
 ## Design Philosophy
 
 The type system serves as the configuration language for dependency injection. Classes declare dependencies through Python type annotations and remain completely unaware of the DI container — they are plain objects usable without the framework. Around this foundation, the library layers real encapsulation (private-by-default module bindings), pluggable lifecycle management (scopes as interchangeable strategies rather than a fixed hierarchy), and layered safety guarantees (static and runtime circular dependency detection, container freezing, and typed exceptions) — all while maintaining dual sync/async support. The result is a framework that combines zero-configuration autowiring with the structural guardrails needed for complex applications, without ever coupling application code to the container.
