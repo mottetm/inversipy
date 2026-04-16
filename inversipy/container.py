@@ -168,10 +168,17 @@ class Container:
         self._modules.append(module)
         return self
 
-    def get[T](self, interface: type[T], name: str | None = None) -> T:
-        """Resolve a dependency from the container."""
-        key = make_key(interface, name)
+    def _lookup_local_binding(
+        self, key: DependencyKey, interface: type[Any]
+    ) -> Optional["Binding"]:
+        """Run cycle and ambiguity checks, return the local binding if any.
 
+        Shared between sync and async resolution paths. Raises
+        CircularDependencyError if ``key`` is already on the resolution stack
+        and AmbiguousDependencyError if more than one binding is registered
+        locally. Returns the single local binding, or None to signal that the
+        caller should fall back to modules and parent.
+        """
         if key in self._resolution_stack:
             cycle_types = [get_type_from_key(k) for k in self._resolution_stack] + [
                 get_type_from_key(key)
@@ -179,11 +186,15 @@ class Container:
             raise CircularDependencyError(cycle_types)
 
         bindings = self._bindings.get(key, [])
-
         if len(bindings) > 1:
             raise AmbiguousDependencyError(interface, len(bindings), self._name)
 
-        binding = bindings[0] if len(bindings) == 1 else None
+        return bindings[0] if len(bindings) == 1 else None
+
+    def get[T](self, interface: type[T], name: str | None = None) -> T:
+        """Resolve a dependency from the container."""
+        key = make_key(interface, name)
+        binding = self._lookup_local_binding(key, interface)
 
         if binding is None:
             for module in self._modules:
@@ -245,19 +256,7 @@ class Container:
     async def get_async[T](self, interface: type[T], name: str | None = None) -> T:
         """Resolve a dependency from the container asynchronously."""
         key = make_key(interface, name)
-
-        if key in self._resolution_stack:
-            cycle_types = [get_type_from_key(k) for k in self._resolution_stack] + [
-                get_type_from_key(key)
-            ]
-            raise CircularDependencyError(cycle_types)
-
-        bindings = self._bindings.get(key, [])
-
-        if len(bindings) > 1:
-            raise AmbiguousDependencyError(interface, len(bindings), self._name)
-
-        binding = bindings[0] if len(bindings) == 1 else None
+        binding = self._lookup_local_binding(key, interface)
 
         if binding is None:
             for module in self._modules:
