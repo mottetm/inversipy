@@ -502,6 +502,13 @@ class Container:
             f"Failed to create instance of {binding.implementation.__name__}: {e}"
         )
 
+    @staticmethod
+    def _instantiate_target_name(binding: "Binding") -> str:
+        """Format the target description used in resolve-error messages."""
+        if binding.implementation is not None:
+            return f"class '{binding.implementation.__name__}'"
+        return f"factory for {binding.key}"
+
     def _instantiate_binding(self, binding: "Binding") -> Any:
         """Create an instance from a binding, resolving its dependencies.
 
@@ -524,11 +531,7 @@ class Container:
             assert binding._provider is not None
             assert binding._invoke is not None
             deps = analyze_parameters(binding._provider, skip_self=True)
-            target = (
-                f"class '{binding.implementation.__name__}'"
-                if binding.implementation is not None
-                else f"factory for {binding.key}"
-            )
+            target = self._instantiate_target_name(binding)
             kwargs = self._resolve_deps(deps, target)
             return binding._invoke(**kwargs)
         except Exception as e:
@@ -550,11 +553,7 @@ class Container:
             assert binding._provider is not None
             assert binding._invoke is not None
             deps = analyze_parameters(binding._provider, skip_self=True)
-            target = (
-                f"class '{binding.implementation.__name__}'"
-                if binding.implementation is not None
-                else f"factory for {binding.key}"
-            )
+            target = self._instantiate_target_name(binding)
             kwargs = await self._resolve_deps_async(deps, target)
             result = binding._invoke(**kwargs)
             if asyncio.iscoroutine(result):
